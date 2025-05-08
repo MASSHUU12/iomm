@@ -10,6 +10,9 @@ RUN dnf install -y \
   glibc-devel \
   time \
   gnuplot \
+  golang \
+  ldc \
+  zig \
   && dnf clean all
 
 RUN rm -rf /var/lib/apt/lists/*
