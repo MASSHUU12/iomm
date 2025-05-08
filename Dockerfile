@@ -1,14 +1,14 @@
-FROM ubuntu:24.10
+FROM fedora:42
 
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends \
-  build-essential clang cmake unzip wget \
-  openjdk-23-jdk-headless \
+RUN dnf install -y \
+  perf \
+  clang cmake unzip wget \
+  java-21-openjdk-portable \
   dotnet-sdk-9.0 \
   python3 python3-pip python3-setuptools \
-  linux-tools-common linux-tools-generic \
   pkg-config \
-  libc6-dev
+  glibc-devel \
+  && dnf clean all
 
 RUN rm -rf /var/lib/apt/lists/*
 
