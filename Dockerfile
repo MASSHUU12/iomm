@@ -8,6 +8,8 @@ RUN dnf install -y \
   python3 python3-pip python3-setuptools \
   pkg-config \
   glibc-devel \
+  time \
+  gnuplot \
   && dnf clean all
 
 RUN rm -rf /var/lib/apt/lists/*
