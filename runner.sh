@@ -14,7 +14,6 @@ for lang in "${LANGS[@]}"; do
   ( cd "$ROOT/$DIR/$lang" && ./build.sh )
 
   echo "[$lang] running..."
-  # TODO: Adjust to the PhreakProcess
   ( cd "$ROOT/$DIR/$lang" && ./run.sh )
 done
 

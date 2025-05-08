@@ -15,7 +15,9 @@ RUN rm -rf /var/lib/apt/lists/*
 RUN wget --quiet https://sh.rustup.rs -O /tmp/rustup.sh \
   && sh /tmp/rustup.sh -y --no-modify-path \
   && rm /tmp/rustup.sh
-ENV PATH="${HOME}/.cargo/bin:${PATH}"
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+RUN cargo install --locked hyperfine
 
 WORKDIR /app
 
