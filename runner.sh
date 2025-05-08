@@ -5,7 +5,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")" && pwd)
 mkdir -p "$ROOT/results"
 
-LANGS=( cpp )
+LANGS=( rust )
 DIR="benchmarks"
 
 for lang in "${LANGS[@]}"; do

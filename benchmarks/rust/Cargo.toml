@@ -1,0 +1,12 @@
+[package]
+name = "rust"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+criterion = "0.5.1"
+
+[[bench]]
+name = "example_bench"
+harness = false
+path = "benches/example_bench.rs"
