@@ -5,7 +5,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")" && pwd)
 mkdir -p "$ROOT/results"
 
-LANGS=( zig )
+LANGS=( go )
 DIR="benchmarks"
 
 for lang in "${LANGS[@]}"; do
