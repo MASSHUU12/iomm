@@ -19,7 +19,9 @@ for bench in benchmarks/*.py; do
 
   pytest "$bench" \
     --benchmark-only \
-    --benchmark-json="${OUT_DIR}/${name}_bench.json"
+    --benchmark-json="${OUT_DIR}/${name}_bench.json" \
+    --benchmark-warmup=true \
+    --benchmark-warmup-iterations=10
 
   hyperfine \
     --warmup 3 \
