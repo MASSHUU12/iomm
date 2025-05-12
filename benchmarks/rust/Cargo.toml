@@ -7,6 +7,16 @@ edition = "2021"
 criterion = "0.5.1"
 
 [[bench]]
-name = "example_bench"
+name = "micro_small_alloc_bench"
 harness = false
-path = "benches/example_bench.rs"
+path = "benches/micro_small_alloc_bench.rs"
+
+[[bench]]
+name = "micro_large_alloc_bench"
+harness = false
+path = "benches/micro_large_alloc_bench.rs"
+
+[[bench]]
+name = "micro_buffer_reuse_bench"
+harness = false
+path = "benches/micro_buffer_reuse_bench.rs"

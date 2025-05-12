@@ -13,6 +13,9 @@ max_line_length = 120
 insert_final_newline = true
 trim_trailing_whitespace = true
 
+[*.rs]
+indent_size = 4
+
 [*.ps1]
 end_of_line = crlf
 max_line_length = 115
