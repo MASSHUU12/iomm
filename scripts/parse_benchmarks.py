@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+
+import os
+import glob
+import json
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+OUT_DIR = "benchmark_results"
+
+def parse_hyperfine() -> pd.DataFrame:
+    """Parse all Hyperfine CSV files and plot runtime means with error bars."""
+    csv_files = glob.glob(os.path.join(OUT_DIR, "*_time.csv"))
+    dfs = []
+    for csvfile in csv_files:
+        name = os.path.basename(csvfile).replace("_time.csv", "")
+        df = pd.read_csv(csvfile)
+        df["benchmark"] = name
+        df["mean_ms"] = df["mean"] * 1000  # Convert seconds to ms
+        df["stddev_ms"] = df["stddev"] * 1000
+        dfs.append(df)
+    if dfs:
+        all_hf = pd.concat(dfs, ignore_index=True)
+        plt.figure(figsize=(10, 6))
+        plt.bar(
+            all_hf["benchmark"],
+            all_hf["mean_ms"],
+            yerr=all_hf["stddev_ms"],
+            capsize=5,
+            color="skyblue"
+        )
+        plt.title("Hyperfine: Mean runtimes with stddev (ms)")
+        plt.ylabel("Mean runtime (ms)")
+        plt.xlabel("Benchmark")
+        plt.tight_layout()
+        plt.savefig(os.path.join(OUT_DIR, "hyperfine_means.png"))
+        print("Saved: hyperfine_means.png")
+        return all_hf
+    else:
+        print("No Hyperfine results found.")
+        return pd.DataFrame()
+
+def parse_hyperfine_json() -> pd.DataFrame:
+    json_files = glob.glob(os.path.join(OUT_DIR, "*_time.json"))
+    all_runs = []
+    for jsonfile in json_files:
+        name = os.path.basename(jsonfile).replace("_time.json", "")
+        with open(jsonfile) as f:
+            data = json.load(f)
+            for result in data.get("results", []):
+                times = result.get("times")
+                if times:
+                    for t in times:
+                        all_runs.append({"benchmark": name, "runtime_ms": t * 1000})
+    if all_runs:
+        df = pd.DataFrame(all_runs)
+        plt.figure(figsize=(10, 6))
+        sns.violinplot(x="benchmark", y="runtime_ms", data=df)
+        plt.title("Hyperfine: Runtime distributions (ms)")
+        plt.ylabel("Runtime (ms)")
+        plt.tight_layout()
+        plt.savefig(os.path.join(OUT_DIR, "hyperfine_runtimes_violin.png"))
+        print("Saved: hyperfine_runtimes_violin.png")
+        return df
+    else:
+        print("No per-run timing data found in Hyperfine JSON")
+        return pd.DataFrame()
+
+def parse_gnutime() -> pd.DataFrame:
+    """Parse GNU time CSV file and plot CPU/memory usage."""
+    csvfile = os.path.join(OUT_DIR, "cpu_mem.csv")
+    if not os.path.exists(csvfile):
+        print("No GNU time results found.")
+        return pd.DataFrame()
+    df = pd.read_csv(csvfile, header=None, names=["benchmark", "elapsed_s", "user_s", "sys_s", "max_rss_kb"])
+    df["max_rss_mb"] = df["max_rss_kb"] / 1024
+    plt.figure(figsize=(10, 6))
+    sns.barplot(x="benchmark", y="max_rss_mb", data=df)
+    plt.title("Peak Memory Usage (MB)")
+    plt.ylabel("Peak RSS (MB)")
+    plt.tight_layout()
+    plt.savefig(os.path.join(OUT_DIR, "gnu_time_memory.png"))
+    print("Saved: gnu_time_memory.png")
+    return df
+
+def parse_perf() -> pd.DataFrame:
+    """Parse perf stat CSV files and plot hardware counter results."""
+    import csv
+
+    csv_files = glob.glob(os.path.join(OUT_DIR, "*_perf.csv"))
+    dfs = []
+    for csvfile in csv_files:
+        name = os.path.basename(csvfile).replace("_perf.csv", "")
+        perf_rows = []
+        with open(csvfile, newline="") as f:
+            reader = csv.reader(f)
+            for row in reader:
+                if not row or row[0].startswith("#"):
+                    continue
+                # Defensive: skip rows that are too short
+                if len(row) < 3:
+                    continue
+                value = row[0]
+                event = row[2]
+                # Only keep rows where value and event look valid
+                if value and event:
+                    try:
+                        value = float(value)
+                    except ValueError:
+                        continue
+                    perf_rows.append({"benchmark": name, "event": event, "value": value})
+        if perf_rows:
+            dfs.append(pd.DataFrame(perf_rows))
+    if dfs:
+        all_perf = pd.concat(dfs, ignore_index=True)
+        # Pivot for summary
+        all_perf_pivot = all_perf.pivot(index="benchmark", columns="event", values="value")
+        all_perf_pivot.plot(kind="bar", subplots=True, layout=(2,2), figsize=(12, 8), legend=False)
+        plt.suptitle("perf stat: Hardware Counters")
+        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+        plt.savefig(os.path.join(OUT_DIR, "perf_stat_counters.png"))
+        print("Saved: perf_stat_counters.png")
+        return all_perf_pivot
+    else:
+        print("No perf stat results found.")
+        return pd.DataFrame()
+
+def main() -> None:
+    print("Parsing Hyperfine results...")
+    hf = parse_hyperfine()
+    print("Parsing Hyperfine per-run results...")
+    hfj = parse_hyperfine_json()
+    print("Parsing GNU time results...")
+    gt = parse_gnutime()
+    print("Parsing perf stat results...")
+    perf = parse_perf()
+
+    # Save summary tables
+    if not hf.empty:
+        hf.to_csv(os.path.join(OUT_DIR, "hyperfine_summary.csv"), index=False)
+    if not hfj.empty:
+        hfj.to_csv(os.path.join(OUT_DIR, "hyperfine_runtimes_violin.csv"), index=False)
+    if not gt.empty:
+        gt.to_csv(os.path.join(OUT_DIR, "gnutime_summary.csv"), index=False)
+    if not perf.empty:
+        perf.to_csv(os.path.join(OUT_DIR, "perf_summary.csv"))
+
+    print("Analysis complete. See output images and CSVs in:", OUT_DIR)
+
+if __name__ == "__main__":
+    main()
