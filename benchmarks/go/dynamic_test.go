@@ -52,3 +52,26 @@ func BenchmarkLinkedList(b *testing.B) {
 		head = nil
 	}
 }
+
+func BenchmarkShortLivedTasks(b *testing.B) {
+	const (
+		MTasks = 100_000_000
+	)
+
+	type TaskData struct {
+		a, b, c int
+	}
+
+	for b.Loop() {
+		for j := range MTasks {
+			t := &TaskData{
+				a: j,
+				b: j * 2,
+				c: j * 3,
+			}
+
+			sum := t.a + t.b + t.c
+			_ = sum
+		}
+	}
+}
