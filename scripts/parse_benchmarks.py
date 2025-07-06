@@ -84,6 +84,43 @@ def parse_hyperfine_speedup(all_hf: pd.DataFrame) -> pd.DataFrame:
 
     return all_hf
 
+def parse_hyperfine_split(all_hf: pd.DataFrame, threshold_ms: float = 500.0) -> None:
+    """
+    Split benchmarks into 'fast' (< threshold_ms) and 'slow' (>= threshold_ms) groups,
+    then plot them in two side-by-side subplots. The 'slow' subplot uses a log y-axis.
+    """
+    if all_hf.empty:
+        print("No data for hyperfine split plot.")
+        return
+
+    fast = all_hf[all_hf["mean_ms"] < threshold_ms]
+    slow = all_hf[all_hf["mean_ms"] >= threshold_ms]
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5), sharey=False)
+
+    # Fast benchmarks (linear scale)
+    ax1.bar(fast["benchmark"], fast["mean_ms"], yerr=fast["stddev_ms"], capsize=5, color="skyblue")
+    ax1.set_title(f"Fast benchmarks (< {threshold_ms} ms)")
+    ax1.set_ylabel("Mean runtime (ms)")
+    ax1.set_xlabel("Benchmark")
+    ax1.tick_params(axis='x', rotation=45, labelrotation=45)
+    ax1.grid(which='major', axis='y', linestyle='--', linewidth=0.5)
+
+    # Slow benchmarks (log scale)
+    ax2.bar(slow["benchmark"], slow["mean_ms"], yerr=slow["stddev_ms"], capsize=5, color="salmon")
+    ax2.set_yscale('log')
+    ax2.set_title(f"Slow benchmarks (≥ {threshold_ms} ms) – Log Scale")
+    ax2.set_xlabel("Benchmark")
+    ax2.tick_params(axis='x', rotation=45, labelrotation=45)
+    ax2.yaxis.set_major_formatter(mtick.ScalarFormatter())
+    ax2.yaxis.set_minor_formatter(mtick.NullFormatter())
+    ax2.grid(which='major', axis='y', linestyle='--', linewidth=0.5)
+
+    plt.tight_layout()
+    out_path = os.path.join(OUT_DIR, f"hyperfine_split_{int(threshold_ms)}ms.png")
+    plt.savefig(out_path)
+    print(f"Saved: {out_path}")
+
 def parse_hyperfine_json() -> pd.DataFrame:
     json_files = glob.glob(os.path.join(OUT_DIR, "*_time.json"))
     all_runs = []
@@ -220,6 +257,9 @@ def parse_perf_heatmap(all_perf_pivot: pd.DataFrame) -> pd.DataFrame:
 def main() -> None:
     print("Parsing Hyperfine results...")
     hf = parse_hyperfine()
+
+    print("Generating Hyperfine split plot…")
+    parse_hyperfine_split(hf, threshold_ms=500.0)
 
     print("Generating Hyperfine speedup plot...")
     parse_hyperfine_speedup(hf)
