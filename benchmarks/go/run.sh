@@ -11,6 +11,8 @@ rm -rf "${OUT_DIR}"/*.{csv,json}
 BENCHES=(
   BenchmarkSmallAllocDealloc
   BenchmarkLargeAllocDealloc
+  BenchmarkSmallReuse
+  BenchmarkLargeReuse
 )
 
 echo "=== Running Go benchmarks ==="
