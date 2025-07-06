@@ -13,6 +13,7 @@ BENCHES=(
   BenchmarkLargeAllocDealloc
   BenchmarkSmallReuse
   BenchmarkLargeReuse
+  BenchmarkDynamicArray
 )
 
 echo "=== Running Go benchmarks ==="
