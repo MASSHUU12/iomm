@@ -145,6 +145,41 @@ def parse_perf() -> pd.DataFrame:
         print("No perf stat results found.")
         return pd.DataFrame()
 
+def parse_perf_heatmap(all_perf_pivot: pd.DataFrame) -> pd.DataFrame:
+    """
+    Given the perf pivot table (benchmarks × events), normalize each event column to [0–1]
+    and plot a heatmap of normalized counter values.
+    """
+    import seaborn as sns
+    import matplotlib.pyplot as plt
+
+    if all_perf_pivot.empty:
+        print("No data for perf heatmap.")
+        return all_perf_pivot
+
+    normed = all_perf_pivot.divide(all_perf_pivot.max(axis=0), axis=1)
+
+    plt.figure(figsize=(12, max(4, len(normed) * 0.5)))
+    ax = sns.heatmap(
+        normed,
+        annot=True,
+        fmt=".2f",
+        linewidths=0.5,
+        linecolor="gray",
+        cbar_kws={"label": "Normalized value (0–1)"}
+    )
+    ax.set_title("Normalized perf counters heatmap")
+    ax.set_ylabel("Benchmark")
+    ax.set_xlabel("Event")
+
+    plt.tight_layout()
+    out_path = os.path.join(OUT_DIR, "perf_counters_heatmap.png")
+    plt.savefig(out_path)
+    print(f"Saved: {out_path}")
+
+    return normed
+
+
 def main() -> None:
     print("Parsing Hyperfine results...")
     hf = parse_hyperfine()
@@ -154,6 +189,7 @@ def main() -> None:
     gt = parse_gnutime()
     print("Parsing perf stat results...")
     perf = parse_perf()
+    parse_perf_heatmap(perf)
 
     # Save summary tables
     if not hf.empty:
