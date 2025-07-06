@@ -2,10 +2,15 @@
 set -euo pipefail
 
 cd "$(dirname "$0")"
+ROOT=$(pwd)
+OUT_BIN_DIR="$ROOT/bin"
 
-echo "[go] downloading modules…"
+mkdir -p "${OUT_BIN_DIR}"
+
+echo "[go] downloading modules..."
 go mod download
 
 echo "[go] compiling test binary…"
-# -c: compile only, -o bench.test: name the binary
-go test -c -o bench.test
+go test -c -o "${OUT_BIN_DIR}/bench.test" ./...
+
+echo "[go] built ${OUT_BIN_DIR}/bench.test"
