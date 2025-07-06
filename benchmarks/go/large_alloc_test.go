@@ -33,22 +33,3 @@ func BenchmarkLargeReuse(b *testing.B) {
 		}
 	}
 }
-
-func BenchmarkDynamicArray(b *testing.B) {
-	const (
-		CAPACITY = 1_000_000
-	)
-
-	for b.Loop() {
-		arr := make([]int, 0, CAPACITY)
-
-		for j := range CAPACITY {
-			arr = append(arr, j)
-		}
-
-		sum := 0
-		for _, v := range arr {
-			sum += v
-		}
-	}
-}
