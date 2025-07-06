@@ -17,6 +17,7 @@ BENCHES=(
   BenchmarkLinkedList
   BenchmarkShortLivedTasks
   BenchmarkParallelAlloc
+  BenchmarkSharedQueue
 )
 
 echo "=== Running Go benchmarks ==="
