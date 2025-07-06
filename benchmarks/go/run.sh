@@ -3,45 +3,41 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")" && pwd)
 OUT_DIR="$ROOT/benchmark_results"
-BIN="$ROOT/bench.test"
+BIN="$ROOT/bin/bench.test"
 
 mkdir -p "${OUT_DIR}"
+rm -rf "${OUT_DIR}"/*.{csv,json}
 
-bench_names=()
-while read -r line; do
-  if [[ $line =~ ^Benchmark ]]; then
-    bench_names+=("$line")
-  fi
-done < <("${BIN}" -test.list '^Benchmark')
+BENCHES=(
+  BenchmarkSmallAllocDealloc
+  BenchmarkLargeAllocDealloc
+)
 
-for name in "${bench_names[@]}"; do
-  echo
-  echo "=== Benchmarking ${name} ==="
+echo "=== Running Go benchmarks ==="
+
+for bench in "${BENCHES[@]}"; do
+  echo "--- $bench ---"
 
   hyperfine \
     --warmup 3 \
-    --prepare "true" \
     --runs 10 \
-    --export-csv "${OUT_DIR}/${name}_time.csv" \
-    --export-json "${OUT_DIR}/${name}_time.json" \
-    "${BIN} -test.bench=^${name}$ -test.run=^$" >/dev/null
+    --export-csv "${OUT_DIR}/${bench}_time.csv" \
+    --export-json "${OUT_DIR}/${bench}_time.json" \
+    "\"${BIN}\" -test.bench=^${bench}$ -test.benchtime=1x"
 
   /usr/bin/time \
-    -f "${name},%e,%U,%S,%M" \
+    -f "${bench},%e,%U,%S,%M" \
     -o "${OUT_DIR}/cpu_mem.csv" \
     --append \
-    -- "${BIN}" \
-        -test.bench="^${name}$" \
-        -test.run="^$"
+    "${BIN}" -test.bench=^${bench}$ -test.benchtime=1x
 
   perf stat \
     -x"," \
     -e cycles,instructions,cache-references,cache-misses \
-    -o "${OUT_DIR}/${name}_perf.csv" \
+    -o "${OUT_DIR}/${bench}_perf.csv" \
     -- \
-    "${BIN}" \
-      -test.bench="^${name}$" \
-      -test.run="^$"
+    "${BIN}" -test.bench=^${bench}$ -test.benchtime=1x
+
 done
 
 echo
