@@ -30,8 +30,9 @@ def parse_hyperfine() -> pd.DataFrame:
             capsize=5,
             color="skyblue"
         )
-        plt.title("Hyperfine: Mean runtimes with stddev (ms)")
-        plt.ylabel("Mean runtime (ms)")
+        plt.yscale('log')
+        plt.title("Hyperfine: Mean runtimes with stddev (ms) - Log Scale")
+        plt.ylabel("Mean runtime (ms) - Log Scale")
         plt.xlabel("Benchmark")
         plt.xticks(rotation=45, ha="right")
         plt.tight_layout()
@@ -57,9 +58,11 @@ def parse_hyperfine_json() -> pd.DataFrame:
     if all_runs:
         df = pd.DataFrame(all_runs)
         plt.figure(figsize=(10, 6))
-        sns.violinplot(x="benchmark", y="runtime_ms", data=df)
-        plt.title("Hyperfine: Runtime distributions (ms)")
-        plt.ylabel("Runtime (ms)")
+        ax = plt.gca()
+        sns.violinplot(x="benchmark", y="runtime_ms", data=df, ax=ax)
+        ax.set_yscale('log')
+        plt.title("Hyperfine: Runtime distributions (ms) - Log Scale")
+        plt.ylabel("Runtime (ms) - Log Scale")
         plt.xticks(rotation=45, ha="right")
         plt.tight_layout()
         plt.savefig(os.path.join(OUT_DIR, "hyperfine_runtimes_violin.png"))
@@ -78,9 +81,11 @@ def parse_gnutime() -> pd.DataFrame:
     df = pd.read_csv(csvfile, header=None, names=["benchmark", "elapsed_s", "user_s", "sys_s", "max_rss_kb"])
     df["max_rss_mb"] = df["max_rss_kb"] / 1024
     plt.figure(figsize=(10, 6))
-    sns.barplot(x="benchmark", y="max_rss_mb", data=df)
-    plt.title("Peak Memory Usage (MB)")
-    plt.ylabel("Peak RSS (MB)")
+    ax = plt.gca()
+    sns.barplot(x="benchmark", y="max_rss_mb", data=df, ax=ax)
+    ax.set_yscale('log')
+    plt.title("Peak Memory Usage (MB) - Log Scale")
+    plt.ylabel("Peak RSS (MB) - Log Scale")
     plt.xticks(rotation=45, ha="right")
     plt.tight_layout()
     plt.savefig(os.path.join(OUT_DIR, "gnu_time_memory.png"))
@@ -117,10 +122,21 @@ def parse_perf() -> pd.DataFrame:
             dfs.append(pd.DataFrame(perf_rows))
     if dfs:
         all_perf = pd.concat(dfs, ignore_index=True)
-        # Pivot for summary
         all_perf_pivot = all_perf.pivot(index="benchmark", columns="event", values="value")
-        all_perf_pivot.plot(kind="bar", subplots=True, layout=(2,2), figsize=(12, 8), legend=False)
-        plt.suptitle("perf stat: Hardware Counters")
+
+        fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+        axes = axes.flatten()
+
+        for i, col in enumerate(all_perf_pivot.columns):
+            if i < len(axes):
+                ax = axes[i]
+                all_perf_pivot[col].plot(kind="bar", ax=ax, legend=False)
+                ax.set_title(col)
+                ax.set_yscale('log')
+                ax.set_ylabel(f"{col} - Log Scale")
+                ax.tick_params(axis='x', rotation=90)
+
+        plt.suptitle("perf stat: Hardware Counters - Log Scale")
         plt.tight_layout(rect=[0, 0.03, 1, 0.95])
         plt.savefig(os.path.join(OUT_DIR, "perf_stat_counters.png"))
         print("Saved: perf_stat_counters.png")
