@@ -1,265 +1,275 @@
 #!/usr/bin/env python3
-
-import os
-import glob
+import argparse
+import csv
 import json
+from pathlib import Path
+from typing import List, Optional
+
 import pandas as pd
 import matplotlib.pyplot as plt
-import seaborn as sns
 import matplotlib.ticker as mtick
+import seaborn as sns
 
-OUT_DIR = "benchmark_results"
+OUT_DIR = Path("benchmark_results")
+OUT_DIR.mkdir(exist_ok=True)
+
+
+def save_fig(fig: plt.Figure, name: str) -> None:
+    """Tighten layout, save to OUT_DIR, and print status."""
+    path = OUT_DIR / name
+    fig.tight_layout()
+    fig.savefig(path)
+    print(f"Saved: {path}")
+
+
+def bar_plot(
+    df: pd.DataFrame,
+    x: str,
+    y: str,
+    yerr: Optional[str] = None,
+    title: str = "",
+    ylabel: str = "",
+    log_y: bool = False,
+    color: str = "skyblue",
+    fmt_y_major: bool = False,
+    fmt_y_minor: bool = False,
+    ax: Optional[plt.Axes] = None,
+    fig_kwargs: Optional[dict] = None,
+) -> plt.Axes:
+    """
+    Draw a bar plot (with optional yerr) on the given Axes, or create a new one.
+    """
+    fig_kwargs = fig_kwargs or {"figsize": (10, 6)}
+    if ax is None:
+        fig, ax = plt.subplots(**fig_kwargs)
+    else:
+        fig = ax.figure
+
+    ax.bar(df[x], df[y], yerr=df[yerr] if yerr else None, capsize=5, color=color)
+
+    if log_y:
+        ax.set_yscale("log")
+    if fmt_y_major:
+        ax.yaxis.set_major_formatter(mtick.ScalarFormatter())
+    if fmt_y_minor:
+        ax.yaxis.set_minor_formatter(mtick.NullFormatter())
+
+    ax.set_title(title)
+    ax.set_xlabel(x.capitalize())
+    ax.set_ylabel(ylabel)
+    ax.tick_params(axis="x", rotation=45, labelrotation=45)
+    ax.grid(which="major", axis="y", linestyle="--", linewidth=0.5)
+    return ax
+
+
+def read_hyperfine_csvs() -> pd.DataFrame:
+    """Read all *_time.csv under OUT_DIR, annotate and return a single DataFrame."""
+    files = sorted(OUT_DIR.glob("*_time.csv"))
+    records = []
+    for path in files:
+        name = path.stem.replace("_time", "")
+        df = pd.read_csv(path)
+        df = df.assign(
+            benchmark=name,
+            mean_ms=df["mean"] * 1_000,
+            stddev_ms=df["stddev"] * 1_000,
+        )
+        records.append(df[["benchmark", "mean_ms", "stddev_ms"]])
+    if not records:
+        print("No Hyperfine CSV results found.")
+        return pd.DataFrame()
+    return pd.concat(records, ignore_index=True)
+
 
 def parse_hyperfine() -> pd.DataFrame:
-    """Parse all Hyperfine CSV files and plot runtime means with error bars (log scale)."""
-    csv_files = glob.glob(os.path.join(OUT_DIR, "*_time.csv"))
-    dfs = []
-    for csvfile in csv_files:
-        name = os.path.basename(csvfile).replace("_time.csv", "")
-        df = pd.read_csv(csvfile)
-        df["benchmark"] = name
-        df["mean_ms"] = df["mean"] * 1000
-        df["stddev_ms"] = df["stddev"] * 1000
-        dfs.append(df)
-    if not dfs:
-        print("No Hyperfine results found.")
-        return pd.DataFrame()
+    hf = read_hyperfine_csvs()
+    if hf.empty:
+        return hf
 
-    all_hf = pd.concat(dfs, ignore_index=True)
-
-    fig, ax = plt.subplots(figsize=(10, 6))
-    ax.bar(
-        all_hf["benchmark"],
-        all_hf["mean_ms"],
-        yerr=all_hf["stddev_ms"],
-        capsize=5,
-        color="skyblue"
+    ax = bar_plot(
+        hf,
+        x="benchmark",
+        y="mean_ms",
+        yerr="stddev_ms",
+        title="Hyperfine: Mean runtimes with stddev (ms) – Log Scale",
+        ylabel="Mean runtime (ms)",
+        log_y=True,
+        fmt_y_major=True,
+        fmt_y_minor=True,
     )
-    ax.set_yscale('log')
-    ax.set_title("Hyperfine: Mean runtimes with stddev (ms) – Log Scale")
-    ax.set_ylabel("Mean runtime (ms) – Log Scale")
-    ax.set_xlabel("Benchmark")
-    ax.tick_params(axis='x', rotation=45, labelrotation=45)
+    save_fig(ax.figure, "hyperfine_means.png")
+    return hf
 
-    ax.yaxis.set_major_formatter(mtick.ScalarFormatter())
-    ax.yaxis.set_minor_formatter(mtick.NullFormatter())
-    ax.grid(which='major', axis='y', linestyle='--', linewidth=0.5)
 
-    plt.tight_layout()
-    out_path = os.path.join(OUT_DIR, "hyperfine_means.png")
-    plt.savefig(out_path)
-    print(f"Saved: {out_path}")
-
-    return all_hf
-
-def parse_hyperfine_speedup(all_hf: pd.DataFrame) -> pd.DataFrame:
-    """
-    Plot relative speedups (baseline / mean_ms) so everything is on a common '×-speed' scale.
-    """
-    if all_hf.empty:
+def parse_hyperfine_speedup(hf: pd.DataFrame) -> pd.DataFrame:
+    if hf.empty:
         print("No data for hyperfine speedup.")
-        return all_hf
+        return hf
 
-    baseline = all_hf["mean_ms"].min()
-    all_hf = all_hf.copy()
-    all_hf["speedup"] = baseline / all_hf["mean_ms"]
+    baseline = hf["mean_ms"].min()
+    hf2 = hf.assign(speedup=lambda d: baseline / d["mean_ms"])
 
-    fig, ax = plt.subplots(figsize=(10, 6))
-    ax.bar(
-        all_hf["benchmark"],
-        all_hf["speedup"],
-        color="skyblue"
+    ax = bar_plot(
+        hf2,
+        x="benchmark",
+        y="speedup",
+        title="Hyperfine: Relative Speedup over Fastest (×)",
+        ylabel="Speedup factor",
     )
-    ax.set_title("Hyperfine: Relative Speedup over Fastest (×)")
-    ax.set_ylabel("Speedup factor")
-    ax.set_xlabel("Benchmark")
+    save_fig(ax.figure, "hyperfine_speedup.png")
+    return hf2
 
-    ax.tick_params(axis='x', rotation=45, labelrotation=45)
-    ax.grid(which='major', axis='y', linestyle='--', linewidth=0.5)
 
-    plt.tight_layout()
-    out_path = os.path.join(OUT_DIR, "hyperfine_speedup.png")
-    plt.savefig(out_path)
-    print(f"Saved: {out_path}")
-
-    return all_hf
-
-def parse_hyperfine_split(all_hf: pd.DataFrame, threshold_ms: float = 500.0) -> None:
-    """
-    Split benchmarks into 'fast' (< threshold_ms) and 'slow' (>= threshold_ms) groups,
-    then plot them in two side-by-side subplots. The 'slow' subplot uses a log y-axis.
-    """
-    if all_hf.empty:
+def parse_hyperfine_split(hf: pd.DataFrame, threshold_ms: float = 500.0) -> None:
+    if hf.empty:
         print("No data for hyperfine split plot.")
         return
 
-    fast = all_hf[all_hf["mean_ms"] < threshold_ms]
-    slow = all_hf[all_hf["mean_ms"] >= threshold_ms]
+    fast = hf.query("mean_ms < @threshold_ms")
+    slow = hf.query("mean_ms >= @threshold_ms")
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5), sharey=False)
 
-    # Fast benchmarks (linear scale)
-    ax1.bar(fast["benchmark"], fast["mean_ms"], yerr=fast["stddev_ms"], capsize=5, color="skyblue")
-    ax1.set_title(f"Fast benchmarks (< {threshold_ms} ms)")
-    ax1.set_ylabel("Mean runtime (ms)")
-    ax1.set_xlabel("Benchmark")
-    ax1.tick_params(axis='x', rotation=45, labelrotation=45)
-    ax1.grid(which='major', axis='y', linestyle='--', linewidth=0.5)
+    bar_plot(
+        fast,
+        x="benchmark",
+        y="mean_ms",
+        yerr="stddev_ms",
+        title=f"Fast benchmarks (< {threshold_ms} ms)",
+        ylabel="Mean runtime (ms)",
+        ax=ax1,
+    )
+    bar_plot(
+        slow,
+        x="benchmark",
+        y="mean_ms",
+        yerr="stddev_ms",
+        title=f"Slow benchmarks (≥ {threshold_ms} ms) – Log Scale",
+        ylabel="Mean runtime (ms)",
+        log_y=True,
+        fmt_y_major=True,
+        fmt_y_minor=True,
+        color="salmon",
+        ax=ax2,
+    )
 
-    # Slow benchmarks (log scale)
-    ax2.bar(slow["benchmark"], slow["mean_ms"], yerr=slow["stddev_ms"], capsize=5, color="salmon")
-    ax2.set_yscale('log')
-    ax2.set_title(f"Slow benchmarks (≥ {threshold_ms} ms) – Log Scale")
-    ax2.set_xlabel("Benchmark")
-    ax2.tick_params(axis='x', rotation=45, labelrotation=45)
-    ax2.yaxis.set_major_formatter(mtick.ScalarFormatter())
-    ax2.yaxis.set_minor_formatter(mtick.NullFormatter())
-    ax2.grid(which='major', axis='y', linestyle='--', linewidth=0.5)
+    save_fig(fig, f"hyperfine_split_{int(threshold_ms)}ms.png")
 
-    plt.tight_layout()
-    out_path = os.path.join(OUT_DIR, f"hyperfine_split_{int(threshold_ms)}ms.png")
-    plt.savefig(out_path)
-    print(f"Saved: {out_path}")
 
 def parse_hyperfine_json() -> pd.DataFrame:
-    json_files = glob.glob(os.path.join(OUT_DIR, "*_time.json"))
-    all_runs = []
-    for jsonfile in json_files:
-        name = os.path.basename(jsonfile).replace("_time.json", "")
-        with open(jsonfile) as f:
-            data = json.load(f)
-            for result in data.get("results", []):
-                times = result.get("times")
-                if times:
-                    for t in times:
-                        all_runs.append({"benchmark": name, "runtime_ms": t * 1000})
-    if all_runs:
-        df = pd.DataFrame(all_runs)
-        plt.figure(figsize=(10, 6))
-        ax = plt.gca()
-        sns.violinplot(x="benchmark", y="runtime_ms", data=df, ax=ax)
-        ax.set_yscale('log')
-        plt.title("Hyperfine: Runtime distributions (ms) - Log Scale")
-        plt.ylabel("Runtime (ms) - Log Scale")
-        plt.xticks(rotation=45, ha="right")
-        plt.tight_layout()
-        plt.savefig(os.path.join(OUT_DIR, "hyperfine_runtimes_violin.png"))
-        print("Saved: hyperfine_runtimes_violin.png")
-        return df
-    else:
-        print("No per-run timing data found in Hyperfine JSON")
+    files = sorted(OUT_DIR.glob("*_time.json"))
+    runs = []
+    for path in files:
+        name = path.stem.replace("_time", "")
+        data = json.loads(path.read_text())
+        for result in data.get("results", []):
+            for t in result.get("times", []):
+                runs.append({"benchmark": name, "runtime_ms": t * 1_000})
+
+    if not runs:
+        print("No per-run timing data found in Hyperfine JSON.")
         return pd.DataFrame()
 
-def parse_gnutime() -> pd.DataFrame:
-    """Parse GNU time CSV file and plot CPU/memory usage."""
-    csvfile = os.path.join(OUT_DIR, "cpu_mem.csv")
-    if not os.path.exists(csvfile):
-        print("No GNU time results found.")
-        return pd.DataFrame()
-    df = pd.read_csv(csvfile, header=None, names=["benchmark", "elapsed_s", "user_s", "sys_s", "max_rss_kb"])
-    df["max_rss_mb"] = df["max_rss_kb"] / 1024
-    plt.figure(figsize=(10, 6))
-    ax = plt.gca()
-    sns.barplot(x="benchmark", y="max_rss_mb", data=df, ax=ax)
-    ax.set_yscale('log')
-    plt.title("Peak Memory Usage (MB) - Log Scale")
-    plt.ylabel("Peak RSS (MB) - Log Scale")
-    plt.xticks(rotation=45, ha="right")
-    plt.tight_layout()
-    plt.savefig(os.path.join(OUT_DIR, "gnu_time_memory.png"))
-    print("Saved: gnu_time_memory.png")
+    df = pd.DataFrame(runs)
+    fig = plt.figure(figsize=(10, 6))
+    ax = sns.violinplot(x="benchmark", y="runtime_ms", data=df)
+    ax.set_yscale("log")
+    ax.set_title("Hyperfine: Runtime distributions (ms) – Log Scale")
+    ax.set_ylabel("Runtime (ms)")
+    ax.tick_params(axis="x", rotation=45)
+    save_fig(fig, "hyperfine_runtimes_violin.png")
     return df
 
-def parse_perf() -> pd.DataFrame:
-    """Parse perf stat CSV files and plot hardware counter results."""
-    import csv
 
-    csv_files = glob.glob(os.path.join(OUT_DIR, "*_perf.csv"))
-    dfs = []
-    for csvfile in csv_files:
-        name = os.path.basename(csvfile).replace("_perf.csv", "")
-        perf_rows = []
-        with open(csvfile, newline="") as f:
+def parse_gnutime() -> pd.DataFrame:
+    path = OUT_DIR / "cpu_mem.csv"
+    if not path.exists():
+        print("No GNU time results found.")
+        return pd.DataFrame()
+
+    df = pd.read_csv(path, header=None, names=["benchmark", "elapsed_s", "user_s", "sys_s", "max_rss_kb"])
+    df["max_rss_mb"] = df["max_rss_kb"] / 1024
+
+    fig = plt.figure(figsize=(10, 6))
+    ax = sns.barplot(x="benchmark", y="max_rss_mb", data=df)
+    ax.set_yscale("log")
+    ax.set_title("Peak Memory Usage (MB) – Log Scale")
+    ax.set_ylabel("Peak RSS (MB)")
+    ax.tick_params(axis="x", rotation=45)
+    save_fig(fig, "gnu_time_memory.png")
+    return df
+
+
+def parse_perf() -> pd.DataFrame:
+    files = sorted(OUT_DIR.glob("*_perf.csv"))
+    frames: List[pd.DataFrame] = []
+
+    for path in files:
+        name = path.stem.replace("_perf", "")
+        rows = []
+        with path.open(newline="") as f:
             reader = csv.reader(f)
             for row in reader:
-                if not row or row[0].startswith("#"):
+                if not row or row[0].startswith("#") or len(row) < 3:
                     continue
-                # Defensive: skip rows that are too short
-                if len(row) < 3:
+                try:
+                    val = float(row[0])
+                except ValueError:
                     continue
-                value = row[0]
                 event = row[2]
-                # Only keep rows where value and event look valid
-                if value and event:
-                    try:
-                        value = float(value)
-                    except ValueError:
-                        continue
-                    perf_rows.append({"benchmark": name, "event": event, "value": value})
-        if perf_rows:
-            dfs.append(pd.DataFrame(perf_rows))
-    if dfs:
-        all_perf = pd.concat(dfs, ignore_index=True)
-        all_perf_pivot = all_perf.pivot(index="benchmark", columns="event", values="value")
+                rows.append({"benchmark": name, "event": event, "value": val})
+        if rows:
+            frames.append(pd.DataFrame(rows))
 
-        fig, axes = plt.subplots(2, 2, figsize=(12, 8))
-        axes = axes.flatten()
-
-        for i, col in enumerate(all_perf_pivot.columns):
-            if i < len(axes):
-                ax = axes[i]
-                all_perf_pivot[col].plot(kind="bar", ax=ax, legend=False)
-                ax.set_title(col)
-                ax.set_yscale('log')
-                ax.set_ylabel(f"{col} - Log Scale")
-                ax.tick_params(axis='x', rotation=90)
-
-        plt.suptitle("perf stat: Hardware Counters - Log Scale")
-        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-        plt.savefig(os.path.join(OUT_DIR, "perf_stat_counters.png"))
-        print("Saved: perf_stat_counters.png")
-        return all_perf_pivot
-    else:
+    if not frames:
         print("No perf stat results found.")
         return pd.DataFrame()
 
-def parse_perf_heatmap(all_perf_pivot: pd.DataFrame) -> pd.DataFrame:
-    """
-    Given the perf pivot table (benchmarks × events), normalize each event column to [0–1]
-    and plot a heatmap of normalized counter values.
-    """
-    if all_perf_pivot.empty:
-        print("No data for perf heatmap.")
-        return all_perf_pivot
+    perf = pd.concat(frames, ignore_index=True)
+    pivot = perf.pivot(index="benchmark", columns="event", values="value")
 
-    normed = all_perf_pivot.divide(all_perf_pivot.max(axis=0), axis=1)
-    plt.figure(figsize=(12, max(4, len(normed) * 0.5)))
+    fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+    axes = axes.flatten()
+    for ax, col in zip(axes, pivot.columns):
+        pivot[col].plot.bar(ax=ax, legend=False)
+        ax.set_yscale("log")
+        ax.set_title(col)
+        ax.set_ylabel(f"{col} – Log Scale")
+        ax.tick_params(axis="x", rotation=90)
+
+    fig.suptitle("perf stat: Hardware Counters – Log Scale")
+    save_fig(fig, "perf_stat_counters.png")
+    return pivot
+
+
+def parse_perf_heatmap(pivot: pd.DataFrame) -> pd.DataFrame:
+    if pivot.empty:
+        print("No data for perf heatmap.")
+        return pivot
+
+    normed = pivot.divide(pivot.max(), axis=1)
+    fig = plt.figure(figsize=(12, max(4, len(normed) * 0.5)))
     ax = sns.heatmap(
         normed,
         annot=True,
         fmt=".2f",
         linewidths=0.5,
         linecolor="gray",
-        cbar_kws={"label": "Normalized value (0–1)"}
+        cbar_kws={"label": "Normalized value (0–1)"},
     )
     ax.set_title("Normalized perf counters heatmap")
     ax.set_ylabel("Benchmark")
     ax.set_xlabel("Event")
-
-    plt.tight_layout()
-    out_path = os.path.join(OUT_DIR, "perf_counters_heatmap.png")
-    plt.savefig(out_path)
-    print(f"Saved: {out_path}")
-
+    save_fig(fig, "perf_counters_heatmap.png")
     return normed
 
 
-def main() -> None:
+def main(threshold_ms: float) -> None:
     print("Parsing Hyperfine results...")
     hf = parse_hyperfine()
 
     print("Generating Hyperfine split plot…")
-    parse_hyperfine_split(hf, threshold_ms=500.0)
+    parse_hyperfine_split(hf, threshold_ms)
 
     print("Generating Hyperfine speedup plot...")
     parse_hyperfine_speedup(hf)
@@ -276,17 +286,25 @@ def main() -> None:
     print("Generating perf heatmap...")
     parse_perf_heatmap(perf)
 
-    # Save summary tables
     if not hf.empty:
-        hf.to_csv(os.path.join(OUT_DIR, "hyperfine_summary.csv"), index=False)
+        hf.to_csv(OUT_DIR / "hyperfine_summary.csv", index=False)
     if not hfj.empty:
-        hfj.to_csv(os.path.join(OUT_DIR, "hyperfine_runtimes_violin.csv"), index=False)
+        hfj.to_csv(OUT_DIR / "hyperfine_runtimes_violin.csv", index=False)
     if not gt.empty:
-        gt.to_csv(os.path.join(OUT_DIR, "gnutime_summary.csv"), index=False)
+        gt.to_csv(OUT_DIR / "gnutime_summary.csv", index=False)
     if not perf.empty:
-        perf.to_csv(os.path.join(OUT_DIR, "perf_summary.csv"))
+        perf.to_csv(OUT_DIR / "perf_summary.csv")
 
-    print("Analysis complete. See output images and CSVs in:", OUT_DIR)
+    print("Analysis complete. See outputs in:", OUT_DIR)
+
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Process and plot benchmark results.")
+    parser.add_argument(
+        "--split-threshold",
+        type=float,
+        default=500.0,
+        help="Threshold (ms) to split fast vs slow benchmarks",
+    )
+    args = parser.parse_args()
+    main(args.split_threshold)
