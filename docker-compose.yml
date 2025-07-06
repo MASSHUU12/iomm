@@ -3,7 +3,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: iomm-toolbox:latest
     command: bash
     volumes:
       - .:/app:delegated

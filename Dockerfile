@@ -2,18 +2,20 @@ FROM fedora:42
 
 RUN dnf install -y \
   perf \
-  clang cmake unzip wget \
-  java-21-openjdk-portable \
-  dotnet-sdk-9.0 \
+  unzip wget \
   python3 python3-pip python3-setuptools \
   pkg-config \
   glibc-devel \
   time \
   gnuplot \
   golang \
-  ldc \
   zig \
   && dnf clean all
+
+ENV GOPATH=/root/go
+ENV PATH="$GOPATH/bin:${PATH}"
+
+RUN go install golang.org/x/perf/cmd/benchstat@latest
 
 RUN rm -rf /var/lib/apt/lists/*
 
