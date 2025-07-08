@@ -1,9 +1,9 @@
-ITERATIONS = 10_000
-BLOCK_SIZE = 10 * 1_048_576
-
 def reuse_alloc_benchmark() -> None:
-    buf = bytearray(BLOCK_SIZE)
-    for _ in range(ITERATIONS):
+    ITERS = 100_000
+    BYTES = 256
+
+    buf = bytearray(BYTES)
+    for _ in range(ITERS):
         for i in range(len(buf)):
             buf[i] = 0
 
