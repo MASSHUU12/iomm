@@ -13,6 +13,5 @@ def dynamic_array_benchmark():
     arr = None
 
 
-
 def test_dynamic_array_benchmark(benchmark) -> None:
     benchmark(dynamic_array_benchmark)
