@@ -1,6 +1,9 @@
 def large_alloc_dealloc_benchmark() -> None:
-  for _ in range(0, 10000):
-    _ = bytearray(10 * 1_048_576)
+    ITERS = 100_000
+    BYTES = 5 * 1_048_576
+
+    for _ in range(0, ITERS):
+        _ = bytearray(BYTES)
 
 def test_large_alloc_dealloc_benchmark(benchmark) -> None:
-  benchmark(large_alloc_dealloc_benchmark)
+    benchmark(large_alloc_dealloc_benchmark)
