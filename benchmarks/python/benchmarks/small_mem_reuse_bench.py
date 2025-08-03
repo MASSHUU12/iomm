@@ -1,5 +1,5 @@
 def reuse_alloc_benchmark() -> None:
-    ITERS = 100_000
+    ITERS = 10_000_000
     BYTES = 256
 
     buf = bytearray(BYTES)

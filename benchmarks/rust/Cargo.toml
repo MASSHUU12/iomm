@@ -7,16 +7,46 @@ edition = "2021"
 criterion = "0.5.1"
 
 [[bench]]
-name = "micro_small_alloc_bench"
+name = "dynamic_array_bench"
 harness = false
-path = "benches/micro_small_alloc_bench.rs"
+path = "benches/dynamic_array_bench.rs"
 
 [[bench]]
-name = "micro_large_alloc_bench"
+name = "large_alloc_bench"
 harness = false
-path = "benches/micro_large_alloc_bench.rs"
+path = "benches/large_alloc_bench.rs"
 
 [[bench]]
-name = "micro_buffer_reuse_bench"
+name = "large_buffer_reuse_bench"
 harness = false
-path = "benches/micro_buffer_reuse_bench.rs"
+path = "benches/large_buffer_reuse_bench.rs"
+
+[[bench]]
+name = "linked_list_bench"
+harness = false
+path = "benches/linked_list_bench.rs"
+
+[[bench]]
+name = "parallel_alloc_bench"
+harness = false
+path = "benches/parallel_alloc_bench.rs"
+
+[[bench]]
+name = "shared_queue_bench"
+harness = false
+path = "benches/shared_queue_bench.rs"
+
+[[bench]]
+name = "short_lived_tasks_bench"
+harness = false
+path = "benches/short_lived_tasks_bench.rs"
+
+[[bench]]
+name = "small_alloc_bench"
+harness = false
+path = "benches/small_alloc_bench.rs"
+
+[[bench]]
+name = "small_buffer_reuse_bench"
+harness = false
+path = "benches/small_buffer_reuse_bench.rs"

@@ -1,5 +1,5 @@
 def large_mem_reuse_alloc_benchmark() -> None:
-    ITERS = 100_000
+    ITERS = 10_000
     BYTES = 5 * 1_048_576
 
     buf = bytearray(BYTES)

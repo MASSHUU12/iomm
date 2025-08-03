@@ -1,5 +1,5 @@
 def small_alloc_dealloc_benchmark() -> None:
-    ITERS = 100_000
+    ITERS = 10_000_000
     BYTES = 256
 
     for _ in range(0, ITERS):
