@@ -3,12 +3,15 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")" && pwd)
 OUT_DIR="$ROOT/benchmark_results"
-BIN_DIR="$ROOT/zig-out/bin"
+BIN_DIR="$ROOT"
 
 mkdir -p "${OUT_DIR}"
 
-for exe in "${BIN_DIR}"/*; do
+for exe in "${BIN_DIR}"/test_*.zig; do
   name=$(basename "$exe")
+  command=(zig test -O ReleaseFast -lc "${exe}")
+  cmd="zig test -O ReleaseFast -lc \"$exe\""
+
   echo
   echo "=== Benchmarking ${name} ==="
 
@@ -17,20 +20,21 @@ for exe in "${BIN_DIR}"/*; do
     --runs 10 \
     --export-csv "${OUT_DIR}/${name}_time.csv" \
     --export-json "${OUT_DIR}/${name}_time.json" \
-    "${exe}"
+    -- \
+    "${cmd}"
 
   /usr/bin/time \
     -f "${name},%e,%U,%S,%M" \
     -o "${OUT_DIR}/cpu_mem.csv" \
     --append \
-    "${exe}"
+    "${command[@]}"
 
   perf stat \
     -x"," \
     -e cycles,instructions,cache-references,cache-misses \
     -o "${OUT_DIR}/${name}_perf.csv" \
     -- \
-    "${exe}"
+    "${command[@]}"
 done
 
 echo
