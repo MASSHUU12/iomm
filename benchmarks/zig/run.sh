@@ -9,8 +9,8 @@ mkdir -p "${OUT_DIR}"
 
 for exe in "${BIN_DIR}"/test_*.zig; do
   name=$(basename "$exe")
-  command=(zig test -lc "${exe}")
-  cmd="zig test -lc \"$exe\""
+  command=(zig test -O ReleaseFast -lc "${exe}")
+  cmd="zig test -O ReleaseFast -lc \"$exe\""
 
   echo
   echo "=== Benchmarking ${name} ==="
