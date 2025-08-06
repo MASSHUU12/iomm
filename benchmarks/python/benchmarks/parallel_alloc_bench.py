@@ -1,10 +1,10 @@
-import threading
-import os
+from multiprocessing import Process, cpu_count
+
 
 def parallel_alloc_benchmark():
     TotalAllocs = 1_000_000_000
 
-    workers = os.cpu_count() or 1
+    workers = cpu_count() or 1
     per_worker = TotalAllocs // workers
 
     class Small:
@@ -16,14 +16,18 @@ def parallel_alloc_benchmark():
         for _ in range(per_worker):
             _ = Small(1, 2, 3)
 
-    threads = []
+    processes = []
     for _ in range(workers):
-        t = threading.Thread(target=worker)
-        t.start()
-        threads.append(t)
-    for t in threads:
-        t.join()
+        p = Process(target=worker)
+        p.start()
+        processes.append(p)
+    for p in processes:
+        p.join()
 
 
 def test_parallel_alloc_benchmark(benchmark) -> None:
     benchmark(parallel_alloc_benchmark)
+
+
+if __name__ == "__main__":
+    parallel_alloc_benchmark()

@@ -56,3 +56,7 @@ def shared_queue_benchmark():
 
 def test_shared_queue_benchmark(benchmark) -> None:
     benchmark(shared_queue_benchmark)
+
+
+if __name__ == "__main__":
+    shared_queue_benchmark()

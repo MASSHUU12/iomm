@@ -21,3 +21,7 @@ def linked_list_benchmark():
 
 def test_linked_list_benchmark(benchmark) -> None:
     benchmark(linked_list_benchmark)
+
+
+if __name__ == "__main__":
+    linked_list_benchmark()
