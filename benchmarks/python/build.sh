@@ -8,9 +8,7 @@ source "${VENV_DIR}/bin/activate"
 
 # Install dependencies
 pip install --upgrade pip
-pip install \
-  pytest \
-  pytest-benchmark
+pip install -r requirements.txt
 
 echo "Installed packages:"
 pip freeze

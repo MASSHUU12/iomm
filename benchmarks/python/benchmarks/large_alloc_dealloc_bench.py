@@ -7,3 +7,7 @@ def large_alloc_dealloc_benchmark() -> None:
 
 def test_large_alloc_dealloc_benchmark(benchmark) -> None:
     benchmark(large_alloc_dealloc_benchmark)
+
+
+if __name__ == "__main__":
+    large_alloc_dealloc_benchmark()

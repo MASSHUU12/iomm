@@ -14,3 +14,7 @@ def short_lived_tasks_benchmark():
 
 def test_short_lived_tasks_benchmark(benchmark) -> None:
     benchmark(short_lived_tasks_benchmark)
+
+
+if __name__ == "__main__":
+    short_lived_tasks_benchmark()

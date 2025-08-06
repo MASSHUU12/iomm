@@ -15,3 +15,7 @@ def dynamic_array_benchmark():
 
 def test_dynamic_array_benchmark(benchmark) -> None:
     benchmark(dynamic_array_benchmark)
+
+
+if __name__ == "__main__":
+    dynamic_array_benchmark()
