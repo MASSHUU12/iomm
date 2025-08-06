@@ -12,6 +12,7 @@ fn bench_large_buffer_reuse(c: &mut Criterion) {
                     buf[i] = 0;
                 }
             }
+            std::hint::black_box(&buf);
         })
     });
 }

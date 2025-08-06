@@ -11,16 +11,16 @@ fn bench_short_lived_tasks(c: &mut Criterion) {
 
     c.bench_function("short_lived_tasks", |b| {
         b.iter(|| {
+            let mut total = 0;
             for j in 0..M_TASKS {
                 let t = TaskData {
                     a: j as i32,
                     b: j as i32 * 2,
                     c: j as i32 * 3,
                 };
-
-                let sum = t.a + t.b + t.c;
-                std::hint::black_box(sum);
+                total += t.a + t.b + t.c;
             }
+            std::hint::black_box(total);
         });
     });
 }

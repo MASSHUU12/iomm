@@ -5,7 +5,7 @@ fn bench_dynamic_array(c: &mut Criterion) {
 
     c.bench_function("dynamic_array", |b| {
         b.iter(|| {
-            let mut arr = Vec::with_capacity(CAPACITY);
+            let mut arr = Vec::new();
 
             for j in 0..CAPACITY {
                 arr.push(j);
@@ -16,6 +16,7 @@ fn bench_dynamic_array(c: &mut Criterion) {
                 sum += v;
             }
 
+            std::hint::black_box(&arr);
             std::hint::black_box(sum);
         });
     });

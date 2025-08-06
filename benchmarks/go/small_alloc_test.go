@@ -4,6 +4,8 @@ import (
 	"testing"
 )
 
+var SSink []byte
+
 func BenchmarkSmallAllocDealloc(b *testing.B) {
 	const (
 		ITERS = 10_000_000
@@ -12,7 +14,7 @@ func BenchmarkSmallAllocDealloc(b *testing.B) {
 
 	for b.Loop() {
 		for range ITERS {
-			var _ = make([]byte, BYTES)
+			SSink = make([]byte, BYTES)
 		}
 	}
 }
@@ -31,5 +33,6 @@ func BenchmarkSmallReuse(b *testing.B) {
 				buf[k] = 0
 			}
 		}
+		SSink = buf
 	}
 }

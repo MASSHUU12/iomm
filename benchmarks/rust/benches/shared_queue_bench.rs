@@ -1,4 +1,5 @@
 use criterion::{criterion_group, criterion_main, Criterion};
+use std::hint::black_box;
 use std::sync::{Arc, Barrier, Condvar, Mutex};
 use std::thread;
 use std::thread::available_parallelism;
@@ -58,6 +59,7 @@ fn bench_shared_queue(c: &mut Criterion) {
                     for i in 0..pushes_per_producer {
                         q_clone.push((base + i) as i32);
                     }
+                    0i32
                 }));
             }
 
@@ -66,17 +68,24 @@ fn bench_shared_queue(c: &mut Criterion) {
                 let barrier_clone = Arc::clone(&barrier);
                 handles.push(thread::spawn(move || {
                     barrier_clone.wait();
+                    let mut sum = 0i32;
                     for _ in 0..pops_per_consumer {
-                        let _ = q_clone.pop();
+                        sum += q_clone.pop();
                     }
+                    sum
                 }));
             }
 
             barrier.wait();
 
-            for handle in handles {
-                handle.join().unwrap();
+            let mut grand_sum = 0i32;
+            for (idx, handle) in handles.into_iter().enumerate() {
+                let thread_sum = handle.join().unwrap();
+                if idx >= producers {
+                    grand_sum += thread_sum;
+                }
             }
+            black_box(grand_sum);
         });
     });
 }

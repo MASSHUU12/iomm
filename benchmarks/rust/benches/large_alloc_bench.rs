@@ -7,7 +7,8 @@ fn bench_large_alloc(c: &mut Criterion) {
     c.bench_function("large_allocs", |b| {
         b.iter(|| {
             for _ in 0..N {
-                let _v = vec![0u8; K];
+                let v = vec![0u8; K];
+                std::hint::black_box(&v);
             }
         });
     });

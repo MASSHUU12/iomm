@@ -44,6 +44,7 @@ fn bench_linked_list(c: &mut Criterion) {
             }
 
             std::hint::black_box(sum);
+            std::hint::black_box(head);
         });
     });
 }

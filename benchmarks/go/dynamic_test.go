@@ -2,13 +2,16 @@ package main
 
 import "testing"
 
+var SinkInt int
+var SinkIntSlice []int
+
 func BenchmarkDynamicArray(b *testing.B) {
 	const (
 		CAPACITY = 1_000_000
 	)
 
 	for b.Loop() {
-		arr := make([]int, 0, CAPACITY)
+		arr := make([]int, 0)
 
 		for j := range CAPACITY {
 			arr = append(arr, j)
@@ -19,8 +22,16 @@ func BenchmarkDynamicArray(b *testing.B) {
 			sum += v
 		}
 
-		arr = nil
+		SinkInt = sum
+		SinkIntSlice = arr
 	}
+}
+
+var SinkNode *Node
+
+type Node struct {
+	value int
+	next  *Node
 }
 
 func BenchmarkLinkedList(b *testing.B) {
@@ -28,11 +39,6 @@ func BenchmarkLinkedList(b *testing.B) {
 		ITERS = 10_000_000
 		M     = 1_000_000
 	)
-
-	type Node struct {
-		value int
-		next  *Node
-	}
 
 	for b.Loop() {
 		var head *Node
@@ -47,10 +53,16 @@ func BenchmarkLinkedList(b *testing.B) {
 		for cur := head; cur != nil; cur = cur.next {
 			sum += cur.value
 		}
-		_ = sum
 
-		head = nil
+		SinkInt = sum
+		SinkNode = head
 	}
+}
+
+var SinkTask *TaskData
+
+type TaskData struct {
+	a, b, c int
 }
 
 func BenchmarkShortLivedTasks(b *testing.B) {
@@ -58,20 +70,16 @@ func BenchmarkShortLivedTasks(b *testing.B) {
 		MTasks = 100_000_000
 	)
 
-	type TaskData struct {
-		a, b, c int
-	}
-
 	for b.Loop() {
+		var last *TaskData
 		for j := range MTasks {
 			t := &TaskData{
 				a: j,
 				b: j * 2,
 				c: j * 3,
 			}
-
-			sum := t.a + t.b + t.c
-			_ = sum
+			last = t
 		}
+		SinkTask = last
 	}
 }
