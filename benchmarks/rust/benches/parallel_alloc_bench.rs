@@ -5,7 +5,7 @@ use std::thread;
 use std::thread::available_parallelism;
 
 fn bench_parallel_alloc(c: &mut Criterion) {
-    const TOTAL_ALLOCS: usize = 1_000_000_000;
+    const TOTAL_ALLOCS: usize = 10_000_000_000;
 
     struct Small {
         x: i64,
@@ -28,9 +28,10 @@ fn bench_parallel_alloc(c: &mut Criterion) {
                     let mut sum = 0i64;
                     for i in 0..per_worker {
                         let s = Small { x: 1, y: 2, z: 3 };
+                        let s = black_box(s);
                         sum += s.x + s.y + s.z + (i as i64);
                     }
-                    sum
+                    black_box(sum)
                 }));
             }
 

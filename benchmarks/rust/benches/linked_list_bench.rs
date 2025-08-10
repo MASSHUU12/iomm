@@ -2,7 +2,7 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use std::ptr;
 
 fn bench_linked_list(c: &mut Criterion) {
-    const M: usize = 1_000_000;
+    const M: usize = 100_000_000;
 
     struct Node {
         value: i32,
@@ -14,10 +14,10 @@ fn bench_linked_list(c: &mut Criterion) {
             let mut head: *mut Node = ptr::null_mut();
 
             for j in 0..M {
-                let new_node = Box::into_raw(Box::new(Node {
+                let new_node = std::hint::black_box(Box::into_raw(Box::new(Node {
                     value: j as i32,
                     next: ptr::null_mut(),
-                }));
+                })));
 
                 unsafe {
                     (*new_node).next = head;

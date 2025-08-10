@@ -1,7 +1,7 @@
 const std = @import("std");
 
 test "BenchmarkDynamicArray" {
-    const CAPACITY = 1_000_000;
+    const CAPACITY = 100_000_000;
 
     var sum: usize = 0;
     var arr = std.ArrayList(usize).init(std.heap.page_allocator);

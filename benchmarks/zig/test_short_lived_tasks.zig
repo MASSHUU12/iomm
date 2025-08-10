@@ -1,7 +1,7 @@
 const std = @import("std");
 
 test "BenchmarkShortLivedTasks" {
-    const MTasks = 100_000_000;
+    const MTasks = 1_000_000_000;
 
     const TaskData = struct {
         a: usize,
@@ -18,5 +18,8 @@ test "BenchmarkShortLivedTasks" {
         };
 
         sum += t.a + t.b + t.c;
+        std.mem.doNotOptimizeAway(&t);
     }
+
+    std.mem.doNotOptimizeAway(&sum);
 }

@@ -15,7 +15,7 @@ type Small struct {
 
 func BenchmarkParallelAlloc(b *testing.B) {
 	const (
-		TotalAllocs = 1_000_000_000
+		TotalAllocs = 10_000_000_000
 	)
 
 	workers := runtime.GOMAXPROCS(0)
@@ -105,7 +105,7 @@ func BenchmarkSharedQueue(b *testing.B) {
 				for range popsPerConsumer {
 					last = q.pop()
 				}
-				SinkInt = last
+				MSinkInt = last
 			}()
 		}
 

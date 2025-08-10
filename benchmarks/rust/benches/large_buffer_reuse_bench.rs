@@ -1,18 +1,16 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 
-const N: usize = 10_000_000;
-const K: usize = 256;
+const N: usize = 100_000;
+const K: usize = 5 * 1_048_576;
 
 fn bench_large_buffer_reuse(c: &mut Criterion) {
-    let mut buf = vec![0u8; K];
+    let mut buf = [0u8; K];
     c.bench_function("large_buffer_reuse", |b| {
         b.iter(|| {
             for _ in 0..N {
-                for i in 0..buf.len() {
-                    buf[i] = 0;
-                }
+                buf.fill(0);
+                std::hint::black_box(&buf);
             }
-            std::hint::black_box(&buf);
         })
     });
 }

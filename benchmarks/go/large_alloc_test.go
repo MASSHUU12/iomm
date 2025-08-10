@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-var Sink []byte
+var LSink []byte
 
 func BenchmarkLargeAllocDealloc(b *testing.B) {
 	const (
@@ -14,7 +14,7 @@ func BenchmarkLargeAllocDealloc(b *testing.B) {
 
 	for b.Loop() {
 		for range ITERS {
-			Sink = make([]byte, BYTES)
+			LSink = make([]byte, BYTES)
 		}
 	}
 }
@@ -33,6 +33,6 @@ func BenchmarkLargeReuse(b *testing.B) {
 				buf[k] = 0
 			}
 		}
-		Sink = buf
+		LSink = buf
 	}
 }

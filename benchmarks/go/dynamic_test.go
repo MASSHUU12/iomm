@@ -2,12 +2,14 @@ package main
 
 import "testing"
 
-var SinkInt int
-var SinkIntSlice []int
+var DSinkInt int
+var DSinkIntSlice []int
+var DSinkNode *Node
+var DSinkTask *TaskData
 
 func BenchmarkDynamicArray(b *testing.B) {
 	const (
-		CAPACITY = 1_000_000
+		CAPACITY = 100_000_000
 	)
 
 	for b.Loop() {
@@ -22,12 +24,10 @@ func BenchmarkDynamicArray(b *testing.B) {
 			sum += v
 		}
 
-		SinkInt = sum
-		SinkIntSlice = arr
+		DSinkInt = sum
+		DSinkIntSlice = arr
 	}
 }
-
-var SinkNode *Node
 
 type Node struct {
 	value int
@@ -36,16 +36,13 @@ type Node struct {
 
 func BenchmarkLinkedList(b *testing.B) {
 	const (
-		ITERS = 10_000_000
-		M     = 1_000_000
+		M = 100_000_000
 	)
 
 	for b.Loop() {
 		var head *Node
 		for j := range M {
-			n := new(Node)
-			n.value = j
-			n.next = head
+			n := &Node{value: j, next: head}
 			head = n
 		}
 
@@ -54,12 +51,10 @@ func BenchmarkLinkedList(b *testing.B) {
 			sum += cur.value
 		}
 
-		SinkInt = sum
-		SinkNode = head
+		DSinkInt = sum
+		DSinkNode = head
 	}
 }
-
-var SinkTask *TaskData
 
 type TaskData struct {
 	a, b, c int
@@ -67,7 +62,7 @@ type TaskData struct {
 
 func BenchmarkShortLivedTasks(b *testing.B) {
 	const (
-		MTasks = 100_000_000
+		MTasks = 1_000_000_000
 	)
 
 	for b.Loop() {
@@ -80,6 +75,6 @@ func BenchmarkShortLivedTasks(b *testing.B) {
 			}
 			last = t
 		}
-		SinkTask = last
+		DSinkTask = last
 	}
 }

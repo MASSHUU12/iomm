@@ -2,7 +2,7 @@ from multiprocessing import Process, cpu_count
 
 
 def parallel_alloc_benchmark():
-    TotalAllocs = 1_000_000_000
+    TotalAllocs = 10_000_000_000
 
     workers = cpu_count() or 1
     per_worker = TotalAllocs // workers

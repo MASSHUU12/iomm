@@ -57,7 +57,7 @@ fn bench_shared_queue(c: &mut Criterion) {
                     barrier_clone.wait();
                     let base = p * pushes_per_producer;
                     for i in 0..pushes_per_producer {
-                        q_clone.push((base + i) as i32);
+                        q_clone.push(black_box((base + i) as i32));
                     }
                     0i32
                 }));
@@ -72,7 +72,7 @@ fn bench_shared_queue(c: &mut Criterion) {
                     for _ in 0..pops_per_consumer {
                         sum += q_clone.pop();
                     }
-                    sum
+                    black_box(sum)
                 }));
             }
 

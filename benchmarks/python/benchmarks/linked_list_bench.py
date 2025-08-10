@@ -6,7 +6,7 @@ class Node:
 
 
 def linked_list_benchmark():
-    M = 1_000_000
+    M = 100_000_000
 
     head = None
     for j in range(M):

@@ -5,7 +5,7 @@ class TaskData:
 
 
 def short_lived_tasks_benchmark():
-    MTasks = 100_000_000
+    MTasks = 1_000_000_000
 
     for j in range(MTasks):
         t = TaskData(j, j*2, j*3)
