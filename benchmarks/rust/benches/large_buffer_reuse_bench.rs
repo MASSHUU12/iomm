@@ -8,9 +8,11 @@ fn bench_large_buffer_reuse(c: &mut Criterion) {
     c.bench_function("large_buffer_reuse", |b| {
         b.iter(|| {
             for _ in 0..N {
-                buf.fill(0);
-                std::hint::black_box(&buf);
+                for i in 0..buf.len() {
+                    buf[i] = 0;
+                }
             }
+            std::hint::black_box(&buf);
         })
     });
 }
