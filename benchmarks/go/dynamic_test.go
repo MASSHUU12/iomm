@@ -2,13 +2,18 @@ package main
 
 import "testing"
 
+var DSinkInt int
+var DSinkIntSlice []int
+var DSinkNode *Node
+var DSinkTask *TaskData
+
 func BenchmarkDynamicArray(b *testing.B) {
 	const (
-		CAPACITY = 1_000_000
+		CAPACITY = 100_000_000
 	)
 
 	for b.Loop() {
-		arr := make([]int, 0, CAPACITY)
+		arr := make([]int, 0)
 
 		for j := range CAPACITY {
 			arr = append(arr, j)
@@ -19,27 +24,25 @@ func BenchmarkDynamicArray(b *testing.B) {
 			sum += v
 		}
 
-		arr = nil
+		DSinkInt = sum
+		DSinkIntSlice = arr
 	}
+}
+
+type Node struct {
+	value int
+	next  *Node
 }
 
 func BenchmarkLinkedList(b *testing.B) {
 	const (
-		ITERS = 10_000_000
-		M     = 1_000_000
+		M = 100_000_000
 	)
-
-	type Node struct {
-		value int
-		next  *Node
-	}
 
 	for b.Loop() {
 		var head *Node
 		for j := range M {
-			n := new(Node)
-			n.value = j
-			n.next = head
+			n := &Node{value: j, next: head}
 			head = n
 		}
 
@@ -47,31 +50,31 @@ func BenchmarkLinkedList(b *testing.B) {
 		for cur := head; cur != nil; cur = cur.next {
 			sum += cur.value
 		}
-		_ = sum
 
-		head = nil
+		DSinkInt = sum
+		DSinkNode = head
 	}
+}
+
+type TaskData struct {
+	a, b, c int
 }
 
 func BenchmarkShortLivedTasks(b *testing.B) {
 	const (
-		MTasks = 100_000_000
+		MTasks = 1_000_000_000
 	)
 
-	type TaskData struct {
-		a, b, c int
-	}
-
 	for b.Loop() {
+		var last *TaskData
 		for j := range MTasks {
 			t := &TaskData{
 				a: j,
 				b: j * 2,
 				c: j * 3,
 			}
-
-			sum := t.a + t.b + t.c
-			_ = sum
+			last = t
 		}
+		DSinkTask = last
 	}
 }

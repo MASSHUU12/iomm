@@ -1,5 +1,5 @@
 def dynamic_array_benchmark():
-    CAPACITY = 1_000_000
+    CAPACITY = 100_000_000
 
     arr = []
 

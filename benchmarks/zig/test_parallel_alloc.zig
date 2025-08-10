@@ -8,7 +8,7 @@ const Small = struct {
 };
 
 test "BenchmarkParallelAlloc" {
-    const TotalAllocs = 1_000_000_000;
+    const TotalAllocs = 10_000_000_000;
 
     const allocator = std.heap.page_allocator;
 
@@ -29,10 +29,11 @@ test "BenchmarkParallelAlloc" {
 
 fn workerFn(perWorker: usize) void {
     for (0..perWorker) |i| {
-        _ = &Small{
+        var s = &Small{
             .x = @intCast(i * 1),
             .y = @intCast(i * 2),
             .z = @intCast(i * 3),
         };
+        std.mem.doNotOptimizeAway(&s);
     }
 }

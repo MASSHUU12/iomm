@@ -9,5 +9,6 @@ test "BenchmarkSmallReuse" {
         for (0..BYTES) |i| {
             buf[i] = 0;
         }
+        std.mem.doNotOptimizeAway(&buf);
     }
 }

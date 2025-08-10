@@ -6,13 +6,18 @@ const Node = struct {
 };
 
 test "BenchmarkLinkedList" {
-    const M = 1_000_000;
+    const M = 100_000_000;
+
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+
+    const allocator = arena.allocator();
 
     var sum: usize = 0;
     var head: ?*Node = null;
 
     for (0..M) |j| {
-        const n = std.heap.page_allocator.create(Node) catch return;
+        const n = try allocator.create(Node);
         n.* = Node{ .value = j, .next = head };
         head = n;
     }
@@ -23,10 +28,5 @@ test "BenchmarkLinkedList" {
         cur = node.next;
     }
 
-    cur = head;
-    while (cur) |node| {
-        const next = node.next;
-        std.heap.page_allocator.destroy(node);
-        cur = next;
-    }
+    std.mem.doNotOptimizeAway(&sum);
 }

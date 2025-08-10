@@ -6,14 +6,17 @@ import (
 	"testing"
 )
 
+var MSinkSmall *Small
+var MSinkInt int
+
+type Small struct {
+	x, y, z int64
+}
+
 func BenchmarkParallelAlloc(b *testing.B) {
 	const (
-		TotalAllocs = 1_000_000_000
+		TotalAllocs = 10_000_000_000
 	)
-
-	type Small struct {
-		x, y, z int64
-	}
 
 	workers := runtime.GOMAXPROCS(0)
 	perWorker := TotalAllocs / workers
@@ -25,9 +28,11 @@ func BenchmarkParallelAlloc(b *testing.B) {
 		for range workers {
 			go func() {
 				defer wg.Done()
+				var last *Small
 				for range perWorker {
-					_ = &Small{1, 2, 3}
+					last = &Small{1, 2, 3}
 				}
+				MSinkSmall = last
 			}()
 		}
 
@@ -83,7 +88,6 @@ func BenchmarkSharedQueue(b *testing.B) {
 		var wg sync.WaitGroup
 		wg.Add(producers + consumers)
 
-		// start producers
 		for p := range producers {
 			go func(seed int) {
 				defer wg.Done()
@@ -94,13 +98,14 @@ func BenchmarkSharedQueue(b *testing.B) {
 			}(p)
 		}
 
-		// start consumers
 		for range consumers {
 			go func() {
 				defer wg.Done()
+				var last int
 				for range popsPerConsumer {
-					_ = q.pop()
+					last = q.pop()
 				}
+				MSinkInt = last
 			}()
 		}
 
