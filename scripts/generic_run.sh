@@ -48,6 +48,17 @@ echo "Configuration: ${CONFIG_FILE}"
 echo "Working directory: ${CONFIG_DIR}"
 echo
 
+if [[ -n "${INIT_COMMAND:-}" ]]; then
+  echo "=== Running one-time initialization ==="
+  if eval "${INIT_COMMAND}"; then
+    echo "Initialization completed successfully"
+  else
+    echo "Initialization failed"
+    exit 1
+  fi
+  echo
+fi
+
 run_setup() {
   if [[ -n "${SETUP_COMMAND:-}" ]]; then
     echo "  Running setup: ${SETUP_COMMAND}"
