@@ -1,7 +1,7 @@
 FROM fedora:42
 
 RUN dnf install -y \
-  perf \
+  perf debugfs \
   unzip wget \
   python3 python3-pip python3-setuptools \
   pkg-config \

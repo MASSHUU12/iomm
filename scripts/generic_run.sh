@@ -187,6 +187,7 @@ run_benchmark() {
 
         perf sched map --input "${bench_dir}/sched.data" > "${bench_dir}/sched_map.txt" 2>&1 || echo "    Map generation failed"
         perf sched timehist --input "${bench_dir}/sched.data" > "${bench_dir}/sched_timeline.txt" 2>&1 || echo "    Timeline generation failed"
+        echo "    Analyzing scheduling latency finished successfully"
       fi
     else
       echo "    Scheduling recording failed"

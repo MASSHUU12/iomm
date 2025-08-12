@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if ! command -v cargo &> /dev/null; then
+  for cargo_path in "$HOME/.cargo/bin" "/home/$SUDO_USER/.cargo/bin" "/usr/local/cargo/bin"; do
+    if [ -d "$cargo_path" ]; then
+      export PATH="$cargo_path:$PATH"
+      rustup default stable
+      break
+    fi
+  done
+fi
+
 LANGS=( go python rust zig )
 ROOT=$(cd "$(dirname "$0")" && pwd)
 DIR="benchmarks"
@@ -14,6 +24,14 @@ usage() {
 
 check_dependencies() {
   local deps=("hyperfine" "perf" "/usr/bin/time")
+
+  if [ "$EUID" -eq 0 ] && ! command -v cargo &> /dev/null; then
+    echo "Error: cargo is not available in root's PATH"
+    echo "Try running with: sudo -E $0 $*"
+    echo "Or ensure cargo is installed system-wide"
+    exit 1
+  fi
+
   for dep in "${deps[@]}"; do
     if ! command -v "$dep" &> /dev/null; then
       echo "Error: $dep is required but not installed"
