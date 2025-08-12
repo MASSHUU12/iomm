@@ -12,6 +12,23 @@ usage() {
   exit 1
 }
 
+check_dependencies() {
+  local deps=("hyperfine" "perf" "/usr/bin/time")
+  for dep in "${deps[@]}"; do
+    if ! command -v "$dep" &> /dev/null; then
+      echo "Error: $dep is required but not installed"
+      exit 1
+    fi
+  done
+
+  if [ "$EUID" -ne 0 ]; then
+    echo "Please run as root,"
+    exit 1
+  fi
+}
+
+check_dependencies
+
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   usage
 fi
@@ -41,7 +58,7 @@ for lang in "${SELECTED_LANGS[@]}"; do
   ( cd "$ROOT/$DIR/$lang" && ./build.sh )
 
   echo "[$lang] running..."
-  ( cd "$ROOT/$DIR/$lang" && ./run.sh )
+  ( ./scripts/generic_run.sh "$ROOT/$DIR/$lang/benchmark.conf" )
 done
 
 echo
