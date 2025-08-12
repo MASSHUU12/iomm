@@ -15,7 +15,7 @@ CONFIG_BASENAME="$(basename "$CONFIG_FILE")"
 ROOT="$CONFIG_DIR"
 
 cd "$ROOT"
-source "$CONFIG_FILE"
+source "$CONFIG_BASENAME"
 
 # Set defaults if not specified in config
 OUT_DIR="${OUT_DIR:-$ROOT/benchmark_results}"
@@ -27,7 +27,7 @@ PERF_RECORD_FREQ="${PERF_RECORD_FREQ:-1000}"
 ENABLE_PERF="${ENABLE_PERF:-true}"
 ENABLE_HYPERFINE="${ENABLE_HYPERFINE:-true}"
 ENABLE_TIME="${ENABLE_TIME:-true}"
-ENABLE_SCHED="${ENABLE_SCHED:-false}"
+ENABLE_SCHED="${ENABLE_SCHED:-true}"
 CLEANUP_TEMP="${CLEANUP_TEMP:-true}"
 
 mkdir -p "${SESSION_DIR}"
@@ -188,14 +188,20 @@ run_benchmark() {
 
   if [[ -n "${CUSTOM_BENCHMARK_COMMAND:-}" ]]; then
     echo "  Running custom benchmark command..."
-    local custom_command="${CUSTOM_BENCHMARK_COMMAND//\$BENCH_NAME/$bench_name}"
-    custom_command="${custom_command//\$BENCH_COMMAND/$bench_command}"
-    custom_command="${custom_command//\$BENCH_DIR/$bench_dir}"
-    if eval "$custom_command"; then
+
+    export BENCH_NAME="$bench_name"
+    export BENCH_COMMAND="$bench_command"
+    export BENCH_DIR="$bench_dir"
+    export ROOT="$ROOT"
+    export SESSION_DIR="$SESSION_DIR"
+
+    if eval "$CUSTOM_BENCHMARK_COMMAND"; then
       echo "    Custom benchmark completed successfully"
     else
       echo "    Custom benchmark command failed"
     fi
+
+    unset BENCH_NAME BENCH_COMMAND BENCH_DIR
   fi
 
   run_cleanup
