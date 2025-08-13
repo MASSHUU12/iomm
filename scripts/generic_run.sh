@@ -268,7 +268,7 @@ fi
 
 if [[ -n "${ANALYSIS_COMMAND:-}" ]]; then
   echo "=== Running analysis ==="
-  local analysis_command="${ANALYSIS_COMMAND//\$SESSION_DIR/$SESSION_DIR}"
+  analysis_command="${ANALYSIS_COMMAND//\$SESSION_DIR/$SESSION_DIR}"
   if eval "$analysis_command"; then
     echo "Analysis completed successfully"
   else
