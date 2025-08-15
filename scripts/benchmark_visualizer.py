@@ -85,6 +85,37 @@ class BenchmarkVisualizer:
                 print(f"Warning: Failed to load {resource_file}: {e}")
 
 
+    def _parse_perf_csv(self, file_path: Path) -> pd.DataFrame:
+        rows = []
+
+        try:
+            with open(file_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+
+                    if line.startswith('#') or not line:
+                        continue
+
+                    fields = [field.strip() for field in line.split(',')]
+
+                    if len(fields) >= 3:
+                        row = {
+                            'value': fields[0],
+                            'unit': fields[1] if fields[1] else '',
+                            'event': fields[2],
+                            'runtime': fields[3] if len(fields) > 3 else '',
+                            'percentage': fields[4] if len(fields) > 4 else '',
+                            'additional_info': ','.join(fields[5:]) if len(fields) > 5 else ''
+                        }
+                        rows.append(row)
+
+        except Exception as e:
+            print(f"Error parsing perf CSV {file_path}: {e}")
+            return pd.DataFrame()
+
+        return pd.DataFrame(rows)
+
+
     def _load_perf_data(self):
         for bench_dir in self.session_dir.iterdir():
             if bench_dir.is_dir():
@@ -93,18 +124,18 @@ class BenchmarkVisualizer:
                 perf_file = bench_dir / "perf_counters.csv"
                 if perf_file.exists():
                     try:
-                        df = pd.read_csv(perf_file, header=None,
-                                       names=['value', 'unit', 'event', 'runtime', 'percentage'])
-                        self.perf_counters[bench_name] = df
+                        df = self._parse_perf_csv(perf_file)
+                        if not df.empty:
+                            self.perf_counters[bench_name] = df
                     except Exception as e:
                         print(f"Warning: Failed to load {perf_file}: {e}")
 
                 context_file = bench_dir / "context_stats.csv"
                 if context_file.exists():
                     try:
-                        df = pd.read_csv(context_file, header=None,
-                                       names=['value', 'unit', 'event', 'runtime', 'percentage'])
-                        self.context_stats[bench_name] = df
+                        df = self._parse_perf_csv(context_file)
+                        if not df.empty:
+                            self.context_stats[bench_name] = df
                     except Exception as e:
                         print(f"Warning: Failed to load {context_file}: {e}")
 
@@ -170,6 +201,18 @@ class BenchmarkVisualizer:
             return float(cleaned) if cleaned else None
         except:
             return None
+
+
+    def _get_perf_metric_value(self, data: pd.DataFrame, metric_name: str) -> Optional[float]:
+        try:
+            metric_row = data[data['event'].str.contains(metric_name, na=False, case=False)]
+            if not metric_row.empty:
+                value_str = metric_row.iloc[0]['value']
+                cleaned_value = value_str.replace(',', '')
+                return float(cleaned_value) if cleaned_value else None
+        except (ValueError, AttributeError, IndexError):
+            pass
+        return None
 
 
     def plot_execution_times(self):
@@ -307,27 +350,31 @@ class BenchmarkVisualizer:
             return
 
         metrics = ['cycles', 'instructions', 'cache-references', 'cache-misses',
-                  'branch-instructions', 'branch-misses']
+                  'branch-instructions', 'branch-misses', 'L1-dcache-loads', 'L1-dcache-load-misses']
 
-        fig, axes = plt.subplots(2, 3, figsize=(18, 10))
-        axes = axes.flatten()
+        n_metrics = len(metrics)
+        cols = 3
+        rows = (n_metrics + cols - 1) // cols
+
+        fig, axes = plt.subplots(rows, cols, figsize=(18, 5*rows))
+        if rows == 1:
+            axes = axes if isinstance(axes, np.ndarray) else [axes]
+        else:
+            axes = axes.flatten()
 
         for i, metric in enumerate(metrics):
             if i >= len(axes):
                 break
 
+            ax = axes[i]
             benchmark_names = []
             values = []
 
             for bench_name, data in self.perf_counters.items():
-                metric_row = data[data['event'].str.contains(metric, na=False)]
-                if not metric_row.empty:
-                    try:
-                        value = float(metric_row.iloc[0]['value'].replace(',', ''))
-                        benchmark_names.append(bench_name)
-                        values.append(value)
-                    except (ValueError, AttributeError):
-                        continue
+                value = self._get_perf_metric_value(data, metric)
+                if value is not None:
+                    benchmark_names.append(bench_name)
+                    values.append(value)
 
             if benchmark_names and values:
                 bars = axes[i].bar(benchmark_names, values, alpha=0.7)
@@ -339,12 +386,24 @@ class BenchmarkVisualizer:
                 if len(values) <= 5:
                     for bar, val in zip(bars, values):
                         height = bar.get_height()
-                        axes[i].text(bar.get_x() + bar.get_width()/2., height,
-                                   f'{val:.0f}', ha='center', va='bottom', fontsize=8)
+                        if val >= 1e9:
+                            label = f'{val/1e9:.1f}B'
+                        elif val >= 1e6:
+                            label = f'{val/1e6:.1f}M'
+                        elif val >= 1e3:
+                            label = f'{val/1e3:.1f}K'
+                        else:
+                            label = f'{val:.0f}'
+                        ax.text(bar.get_x() + bar.get_width()/2., height,
+                               label, ha='center', va='bottom', fontsize=8)
             else:
                 axes[i].text(0.5, 0.5, f'No {metric} data',
                            transform=axes[i].transAxes, ha='center', va='center')
                 axes[i].set_title(f'{metric.replace("-", " ").title()} (No Data)')
+
+        # Hide unused subplots
+        for i in range(n_metrics, len(axes)):
+            axes[i].set_visible(False)
 
         plt.tight_layout()
         plt.savefig(self.output_dir / "performance_counters.png", dpi=300, bbox_inches='tight')
@@ -368,27 +427,16 @@ class BenchmarkVisualizer:
         for bench_name, data in self.context_stats.items():
             benchmarks.append(bench_name)
 
-            cs_row = data[data['event'].str.contains('context-switches', na=False)]
-            context_switches.append(
-                float(cs_row.iloc[0]['value'].replace(',', '')) if not cs_row.empty else 0
-            )
+            context_switches.append(self._get_perf_metric_value(data, 'context-switches') or 0)
+            cpu_migrations.append(self._get_perf_metric_value(data, 'cpu-migrations') or 0)
+            page_faults.append(self._get_perf_metric_value(data, 'page-faults') or 0)
 
-            mig_row = data[data['event'].str.contains('cpu-migrations', na=False)]
-            cpu_migrations.append(
-                float(mig_row.iloc[0]['value'].replace(',', '')) if not mig_row.empty else 0
-            )
+            tc_value = self._get_perf_metric_value(data, 'task-clock')
+            task_clock.append(tc_value or 0)
 
-            pf_row = data[data['event'].str.contains('page-faults', na=False)]
-            page_faults.append(
-                float(pf_row.iloc[0]['value'].replace(',', '')) if not pf_row.empty else 0
-            )
-
-            tc_row = data[data['event'].str.contains('task-clock', na=False)]
-            if not tc_row.empty:
-                tc_val = tc_row.iloc[0]['value'].replace(',', '')
-                task_clock.append(float(tc_val) if tc_val else 0)
-            else:
-                task_clock.append(0)
+        if not benchmarks:
+            print("No context switch data found for plotting.")
+            return
 
         bars1 = ax1.bar(benchmarks, context_switches, alpha=0.7)
         ax1.set_xlabel('Benchmark')
@@ -531,7 +579,9 @@ class BenchmarkVisualizer:
     def plot_correlation_analysis(self):
         correlation_data = []
 
-        for bench_name in self.hyperfine_data.keys():
+        for bench_name in set(list(self.hyperfine_data.keys()) +
+                             list(self.perf_counters.keys()) +
+                             list(self.context_stats.keys())):
             row = {'benchmark': bench_name}
 
             if bench_name in self.hyperfine_data:
@@ -552,15 +602,17 @@ class BenchmarkVisualizer:
                     row['system_time'] = resource_row.iloc[0]['system_time']
                     row['memory_mb'] = resource_row.iloc[0]['max_rss_kb'] / 1024
 
+            if bench_name in self.perf_counters:
+                data = self.perf_counters[bench_name]
+                row['cycles'] = self._get_perf_metric_value(data, 'cycles')
+                row['instructions'] = self._get_perf_metric_value(data, 'instructions')
+                row['cache_references'] = self._get_perf_metric_value(data, 'cache-references')
+                row['cache_misses'] = self._get_perf_metric_value(data, 'cache-misses')
+
             if bench_name in self.context_stats:
                 data = self.context_stats[bench_name]
-                cs_row = data[data['event'].str.contains('context-switches', na=False)]
-                if not cs_row.empty:
-                    row['context_switches'] = float(cs_row.iloc[0]['value'].replace(',', ''))
-
-                mig_row = data[data['event'].str.contains('cpu-migrations', na=False)]
-                if not mig_row.empty:
-                    row['cpu_migrations'] = float(mig_row.iloc[0]['value'].replace(',', ''))
+                row['context_switches'] = self._get_perf_metric_value(data, 'context-switches')
+                row['cpu_migrations'] = self._get_perf_metric_value(data, 'cpu-migrations')
 
             if bench_name in self.sched_latency:
                 sched_data = self.sched_latency[bench_name]
@@ -574,22 +626,24 @@ class BenchmarkVisualizer:
             df = pd.DataFrame(correlation_data)
 
             numeric_cols = df.select_dtypes(include=[np.number]).columns
-            numeric_cols = numeric_cols.drop('benchmark', errors='ignore')
 
             if len(numeric_cols) > 1:
-                corr_df = df[numeric_cols]
+                corr_df = df[numeric_cols].dropna(axis=1, how='all')
 
-                fig, ax = plt.subplots(figsize=(12, 10))
-                correlation_matrix = corr_df.corr()
+                if corr_df.shape[1] > 1:
+                    fig, ax = plt.subplots(figsize=(12, 10))
+                    correlation_matrix = corr_df.corr()
 
-                sns.heatmap(correlation_matrix, annot=True, cmap='coolwarm', center=0,
-                           square=True, ax=ax, cbar_kws={'label': 'Correlation Coefficient'})
-                ax.set_title('Correlation Matrix - Performance Metrics')
+                    sns.heatmap(correlation_matrix, annot=True, cmap='coolwarm', center=0,
+                               square=True, ax=ax, cbar_kws={'label': 'Correlation Coefficient'})
+                    ax.set_title('Correlation Matrix - Performance Metrics')
 
-                plt.tight_layout()
-                plt.savefig(self.output_dir / "correlation_analysis.png", dpi=300, bbox_inches='tight')
-                plt.close()
-                print("✓ Generated correlation_analysis.png")
+                    plt.tight_layout()
+                    plt.savefig(self.output_dir / "correlation_analysis.png", dpi=300, bbox_inches='tight')
+                    plt.close()
+                    print("✓ Generated correlation_analysis.png")
+                else:
+                    print("Insufficient numeric data for correlation analysis.")
             else:
                 print("Insufficient numeric data for correlation analysis.")
         else:
@@ -630,6 +684,32 @@ class BenchmarkVisualizer:
                     f.write(f"  CPU Time: {cpu_time:.3f}s (User: {row['user_time']:.3f}s, System: {row['system_time']:.3f}s)\n")
                 f.write("\n")
 
+            if self.perf_counters:
+                f.write("PERFORMANCE COUNTERS\n")
+                f.write("-" * 25 + "\n")
+                for bench_name, data in self.perf_counters.items():
+                    f.write(f"{bench_name}:\n")
+
+                    cycles = self._get_perf_metric_value(data, 'cycles')
+                    instructions = self._get_perf_metric_value(data, 'instructions')
+                    cache_refs = self._get_perf_metric_value(data, 'cache-references')
+                    cache_misses = self._get_perf_metric_value(data, 'cache-misses')
+
+                    if cycles: f.write(f"  Cycles: {cycles:,.0f}\n")
+                    if instructions: f.write(f"  Instructions: {instructions:,.0f}\n")
+                    if cache_refs: f.write(f"  Cache References: {cache_refs:,.0f}\n")
+                    if cache_misses: f.write(f"  Cache Misses: {cache_misses:,.0f}\n")
+
+                    if instructions and cycles:
+                        ipc = instructions / cycles
+                        f.write(f"  IPC: {ipc:.3f}\n")
+
+                    if cache_refs and cache_misses:
+                        cache_miss_rate = (cache_misses / cache_refs) * 100
+                        f.write(f"  Cache Miss Rate: {cache_miss_rate:.2f}%\n")
+
+                    f.write("\n")
+
             if self.sched_latency:
                 f.write("SCHEDULING LATENCY\n")
                 f.write("-" * 20 + "\n")
@@ -648,17 +728,15 @@ class BenchmarkVisualizer:
                 f.write("CONTEXT SWITCHES & MIGRATIONS\n")
                 f.write("-" * 30 + "\n")
                 for bench_name, data in self.context_stats.items():
-                    cs_row = data[data['event'].str.contains('context-switches', na=False)]
-                    mig_row = data[data['event'].str.contains('cpu-migrations', na=False)]
+                    cs_count = self._get_perf_metric_value(data, 'context-switches')
+                    mig_count = self._get_perf_metric_value(data, 'cpu-migrations')
 
-                    if not cs_row.empty:
-                        cs_count = cs_row.iloc[0]['value']
-                        f.write(f"{bench_name}: {cs_count} context switches")
-
-                        if not mig_row.empty:
-                            mig_count = mig_row.iloc[0]['value']
-                            f.write(f", {mig_count} CPU migrations")
-                        f.write("\n")
+                    f.write(f"{bench_name}:")
+                    if cs_count is not None:
+                        f.write(f" {cs_count:.0f} context switches")
+                    if mig_count is not None:
+                        f.write(f", {mig_count:.0f} CPU migrations")
+                    f.write("\n")
 
         print(f"✓ Generated summary report: {report_path}")
 
@@ -766,6 +844,8 @@ Examples:
 
     except Exception as e:
         print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 
