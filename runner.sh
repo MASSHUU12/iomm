@@ -77,6 +77,9 @@ for lang in "${SELECTED_LANGS[@]}"; do
 
   echo "[$lang] running..."
   ( ./scripts/generic_run.sh "$ROOT/$DIR/$lang/benchmark.conf" )
+
+  echo "[$lang] restoring permissions..."
+  ( sudo chown -R "${SUDO_USER:-$USER}:${SUDO_USER:-$USER}" "$ROOT/$DIR/$lang" )
 done
 
 echo
