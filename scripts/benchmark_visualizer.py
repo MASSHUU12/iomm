@@ -4,23 +4,12 @@ import argparse
 import json
 import re
 import sys
+import gc
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Generator, List, Tuple
 import warnings
 
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-import pandas as pd
-import numpy as np
-import seaborn as sns
-from datetime import datetime
-from typing import Dict
-
 warnings.filterwarnings('ignore')
-
-plt.style.use('seaborn-v0_8')
-sns.set_palette("husl")
-
 
 class BenchmarkVisualizer:
     def __init__(self, session_dir: str, output_dir: Optional[str] = None):
@@ -28,67 +17,119 @@ class BenchmarkVisualizer:
         self.output_dir = Path(output_dir) if output_dir else self.session_dir / "graphs"
         self.output_dir.mkdir(exist_ok=True)
 
-        self.hyperfine_data = {}
-        self.resource_data = None
-        self.perf_counters = {}
-        self.context_stats = {}
-        self.sched_latency = {}
-        self.sched_map = {}
-        self.sched_timeline = {}
+        self.hyperfine_paths = {}
+        self.resource_path = None
+        self.perf_counter_paths = {}
+        self.context_stats_paths = {}
+        self.sched_latency_paths = {}
+        self.sched_map_paths = {}
+        self.sched_timeline_paths = {}
 
-        self._load_data()
-
-
-    def _load_data(self):
-        print(f"Loading data from: {self.session_dir}")
-
-        self._load_hyperfine_data()
-        self._load_resource_data()
-        self._load_perf_data()
-        self._load_sched_data()
-
-        print(f"Data loading complete. Graphs will be saved to: {self.output_dir}")
+        self.debug_mode = False
+        self._scan_data_files()
 
 
-    def _load_hyperfine_data(self):
+    def _scan_data_files(self):
+        print(f"Scanning data files in: {self.session_dir}")
+
+        resource_file = self.session_dir / "resource_usage.csv"
+        if resource_file.exists():
+            self.resource_path = resource_file
+
         for bench_dir in self.session_dir.iterdir():
             if bench_dir.is_dir():
                 bench_name = bench_dir.name
 
                 csv_file = bench_dir / "hyperfine_time.csv"
-                if csv_file.exists():
-                    try:
-                        df = pd.read_csv(csv_file)
-                        self.hyperfine_data[bench_name] = df
-                    except Exception as e:
-                        print(f"Warning: Failed to load {csv_file}: {e}")
-
                 json_file = bench_dir / "hyperfine_time.json"
-                if json_file.exists():
-                    try:
-                        with open(json_file, 'r') as f:
-                            json_data = json.load(f)
-                            if bench_name not in self.hyperfine_data:
-                                self.hyperfine_data[bench_name] = {}
-                            self.hyperfine_data[bench_name]['json'] = json_data
-                    except Exception as e:
-                        print(f"Warning: Failed to load {json_file}: {e}")
+
+                if csv_file.exists() or json_file.exists():
+                    self.hyperfine_paths[bench_name] = {}
+                    if csv_file.exists():
+                        self.hyperfine_paths[bench_name]['csv'] = csv_file
+                    if json_file.exists():
+                        self.hyperfine_paths[bench_name]['json'] = json_file
+
+                perf_file = bench_dir / "perf_counters.csv"
+                if perf_file.exists():
+                    self.perf_counter_paths[bench_name] = perf_file
+
+                context_file = bench_dir / "context_stats.csv"
+                if context_file.exists():
+                    self.context_stats_paths[bench_name] = context_file
+
+                sched_latency_file = bench_dir / "sched_latency.txt"
+                if sched_latency_file.exists():
+                    self.sched_latency_paths[bench_name] = sched_latency_file
+
+                sched_map_file = bench_dir / "sched_map.txt"
+                if sched_map_file.exists():
+                    self.sched_map_paths[bench_name] = sched_map_file
+
+                sched_timeline_file = bench_dir / "sched_timeline.txt"
+                if sched_timeline_file.exists():
+                    self.sched_timeline_paths[bench_name] = sched_timeline_file
+
+        for file_name, path_dict in [
+            ("sched_latency.txt", self.sched_latency_paths),
+            ("sched_map.txt", self.sched_map_paths),
+            ("sched_timeline.txt", self.sched_timeline_paths)
+        ]:
+            file_path = self.session_dir / file_name
+            if file_path.exists():
+                path_dict["session_root"] = file_path
+
+        print(f"File scanning complete. Graphs will be saved to: {self.output_dir}")
+
+
+    def _load_hyperfine_data_for_bench(self, bench_name: str) -> dict:
+        result = {}
+
+        if bench_name not in self.hyperfine_paths:
+            return result
+
+        paths = self.hyperfine_paths[bench_name]
+
+        if 'csv' in paths:
+            try:
+                import pandas as pd
+                result['df'] = pd.read_csv(paths['csv'])
+            except Exception as e:
+                print(f"Warning: Failed to load {paths['csv']}: {e}")
+
+        if 'json' in paths:
+            try:
+                with open(paths['json'], 'r') as f:
+                    result['json'] = json.load(f)
+            except Exception as e:
+                print(f"Warning: Failed to load {paths['json']}: {e}")
+
+        return result
 
 
     def _load_resource_data(self):
-        resource_file = self.session_dir / "resource_usage.csv"
-        if resource_file.exists():
-            try:
-                self.resource_data = pd.read_csv(resource_file)
-                if 'timestamp' in self.resource_data.columns:
-                    self.resource_data['datetime'] = pd.to_datetime(
-                        self.resource_data['timestamp'], unit='s'
-                    )
-            except Exception as e:
-                print(f"Warning: Failed to load {resource_file}: {e}")
+        if self.resource_path is None:
+            return None
+
+        try:
+            import pandas as pd
+            resource_data = pd.read_csv(self.resource_path)
+
+            if 'timestamp' in resource_data.columns:
+                resource_data['datetime'] = pd.to_datetime(
+                    resource_data['timestamp'], unit='s'
+                )
+
+            if 'benchmark' in resource_data.columns:
+                resource_data['benchmark'] = resource_data['benchmark'].astype('category')
+
+            return resource_data
+        except Exception as e:
+            print(f"Warning: Failed to load {self.resource_path}: {e}")
+            return None
 
 
-    def _parse_perf_csv(self, file_path: Path) -> pd.DataFrame:
+    def _parse_perf_csv(self, file_path: Path) -> Optional[list]:
         rows = []
 
         try:
@@ -111,81 +152,43 @@ class BenchmarkVisualizer:
                             'additional_info': ','.join(fields[5:]) if len(fields) > 5 else ''
                         }
                         rows.append(row)
-
+            return rows
         except Exception as e:
             print(f"Error parsing perf CSV {file_path}: {e}")
-            return pd.DataFrame()
+            return None
 
+
+    def _get_perf_data(self, bench_name: str):
+        if bench_name not in self.perf_counter_paths:
+            return None
+
+        rows = self._parse_perf_csv(self.perf_counter_paths[bench_name])
+        if not rows:
+            return None
+
+        import pandas as pd
         return pd.DataFrame(rows)
 
 
-    def _load_perf_data(self):
-        for bench_dir in self.session_dir.iterdir():
-            if bench_dir.is_dir():
-                bench_name = bench_dir.name
+    def _get_context_stats(self, bench_name: str):
+        if bench_name not in self.context_stats_paths:
+            return None
 
-                perf_file = bench_dir / "perf_counters.csv"
-                if perf_file.exists():
-                    try:
-                        df = self._parse_perf_csv(perf_file)
-                        if not df.empty:
-                            self.perf_counters[bench_name] = df
-                    except Exception as e:
-                        print(f"Warning: Failed to load {perf_file}: {e}")
+        rows = self._parse_perf_csv(self.context_stats_paths[bench_name])
+        if not rows:
+            return None
 
-                context_file = bench_dir / "context_stats.csv"
-                if context_file.exists():
-                    try:
-                        df = self._parse_perf_csv(context_file)
-                        if not df.empty:
-                            self.context_stats[bench_name] = df
-                    except Exception as e:
-                        print(f"Warning: Failed to load {context_file}: {e}")
+        import pandas as pd
+        return pd.DataFrame(rows)
 
 
-    def _load_sched_data(self):
-        for bench_dir in self.session_dir.iterdir():
-            if bench_dir.is_dir():
-                bench_name = bench_dir.name
-
-                sched_latency_file = bench_dir / "sched_latency.txt"
-                if sched_latency_file.exists():
-                    try:
-                        latency_data = self._parse_sched_latency(sched_latency_file)
-                        if latency_data is not None and not latency_data.empty:
-                            self.sched_latency[bench_name] = latency_data
-                            print(f"✓ Loaded scheduling latency data for {bench_name}: {len(latency_data)} tasks")
-                    except Exception as e:
-                        print(f"Warning: Failed to parse {sched_latency_file}: {e}")
-
-                sched_map_file = bench_dir / "sched_map.txt"
-                if sched_map_file.exists():
-                    try:
-                        map_data = self._parse_sched_map(sched_map_file)
-                        if map_data is not None:
-                            self.sched_map[bench_name] = map_data
-                            print(f"✓ Loaded scheduling map data for {bench_name}")
-                    except Exception as e:
-                        print(f"Warning: Failed to parse {sched_map_file}: {e}")
-
-                sched_timeline_file = bench_dir / "sched_timeline.txt"
-                if sched_timeline_file.exists():
-                    try:
-                        timeline_data = self._parse_sched_timeline(sched_timeline_file)
-                        if timeline_data is not None and not timeline_data.empty:
-                            self.sched_timeline[bench_name] = timeline_data
-                            print(f"✓ Loaded scheduling timeline data for {bench_name}: {len(timeline_data)} entries")
-                    except Exception as e:
-                        print(f"Warning: Failed to parse {sched_timeline_file}: {e}")
-
-
-    def _parse_sched_latency(self, file_path: Path) -> Optional[pd.DataFrame]:
+    def _parse_sched_latency(self, file_path: Path) -> Optional[List[dict]]:
         try:
             with open(file_path, 'r') as f:
                 content = f.read()
 
             lines = [line for line in content.split('\n')
-                     if line.strip() and not line.strip().startswith('-')]
+                    if line.strip() and not line.strip().startswith('-')]
 
             header_idx = -1
             for i, line in enumerate(lines):
@@ -232,17 +235,25 @@ class BenchmarkVisualizer:
                         'max_end_s': max_end
                     })
 
-            if rows:
-                return pd.DataFrame(rows)
-            else:
-                print(f"No valid data rows found in {file_path}")
-                return None
-
+            return rows
         except Exception as e:
             print(f"Error parsing sched latency file {file_path}: {e}")
-            import traceback
-            traceback.print_exc()
+            if self.debug_mode:
+                import traceback
+                traceback.print_exc()
             return None
+
+
+    def _get_sched_latency(self, bench_name: str):
+        if bench_name not in self.sched_latency_paths:
+            return None
+
+        rows = self._parse_sched_latency(self.sched_latency_paths[bench_name])
+        if not rows:
+            return None
+
+        import pandas as pd
+        return pd.DataFrame(rows)
 
 
     def _parse_sched_map(self, file_path: Path) -> Optional[Dict[str, str]]:
@@ -259,73 +270,128 @@ class BenchmarkVisualizer:
                         task_map[task_id] = task_name
 
             return task_map if task_map else None
-
         except Exception as e:
             print(f"Error parsing sched map file {file_path}: {e}")
             return None
 
 
-    def _parse_sched_timeline(self, file_path: Path) -> Optional[pd.DataFrame]:
+    def _get_sched_map(self, bench_name: str):
+        if bench_name not in self.sched_map_paths:
+            return None
+
+        return self._parse_sched_map(self.sched_map_paths[bench_name])
+
+
+    def _parse_sched_timeline(self, file_path: Path) -> Optional[List[dict]]:
         try:
             rows = []
-            header_found = False
 
             with open(file_path, 'r') as f:
                 for line in f:
+                    if line.strip().startswith("-------"):
+                        break
+
+                for line in f:
                     line = line.strip()
-
-                    if not line or line.startswith('Samples'):
+                    if not line:
                         continue
 
-                    if 'time' in line and 'cpu' in line and 'task name' in line:
-                        header_found = True
-                        continue
+                    try:
+                        parts = line.split()
 
-                    if line.startswith('----'):
-                        continue
+                        if len(parts) < 6:
+                            if self.debug_mode:
+                                print(f"DEBUG: Skipping line with insufficient parts: {line}")
+                            continue
 
-                    if header_found:
-                        try:
-                            time_str = line[:15].strip()
-                            cpu_str = line[15:23].strip()
-                            task_info = line[23:52].strip()
-                            wait_time = line[52:63].strip()
-                            sch_delay = line[63:74].strip()
-                            run_time = line[74:].strip()
+                        timestamp_str = parts[0]
+                        timestamp = float(timestamp_str)
 
-                            cpu_match = re.search(r'\[(\d+)\]', cpu_str)
-                            cpu = int(cpu_match.group(1)) if cpu_match else -1
+                        cpu_str = parts[1]
+                        cpu = -1
+                        cpu_match = re.search(r'\[(\d+)\]', cpu_str)
+                        if cpu_match:
+                            cpu = int(cpu_match.group(1))
 
-                            task_pid_match = re.search(r'([^\[]+)\[(\d+)\]', task_info)
-                            if task_pid_match:
-                                task_name = task_pid_match.group(1).strip()
-                                task_pid = int(task_pid_match.group(2))
+                        task_match = re.search(r'(\S+(?:\s+\S+)*?)\[(\d+)\]', line)
+                        if task_match:
+                            full_task_part = task_match.group(0)
+                            task_name = task_match.group(1).strip()
+                            pid = int(task_match.group(2))
+
+                            match_end = line.find(full_task_part) + len(full_task_part)
+                            remaining_line = line[match_end:].strip()
+                            timing_parts = remaining_line.split()
+
+                            if len(timing_parts) >= 3:
+                                wait_time_ms = float(timing_parts[0])
+                                sch_delay_ms = float(timing_parts[1])
+                                run_time_ms = float(timing_parts[2])
                             else:
-                                task_name = task_info
-                                task_pid = -1
+                                wait_time_ms = float(parts[-3])
+                                sch_delay_ms = float(parts[-2])
+                                run_time_ms = float(parts[-1])
+                        else:
+                            if len(parts) >= 6:
+                                task_name = parts[2]
+                                pid = -1
+                                pid_match = re.search(r'\[(\d+)\]', task_name)
+                                if pid_match:
+                                    pid = int(pid_match.group(1))
+                                    task_name = re.sub(r'\[\d+\]', '', task_name).strip()
 
-                            timestamp = float(time_str)
-                            wait_time_ms = float(wait_time) if wait_time else 0.0
-                            sch_delay_ms = float(sch_delay) if sch_delay else 0.0
-                            run_time_ms = float(run_time) if run_time else 0.0
+                                wait_time_ms = float(parts[-3])
+                                sch_delay_ms = float(parts[-2])
+                                run_time_ms = float(parts[-1])
+                            else:
+                                if self.debug_mode:
+                                    print(f"DEBUG: Could not parse task info from line: {line}")
+                                continue
 
-                            rows.append({
-                                'timestamp': timestamp,
-                                'cpu': cpu,
-                                'task_name': task_name,
-                                'pid': task_pid,
-                                'wait_time_ms': wait_time_ms,
-                                'sched_delay_ms': sch_delay_ms,
-                                'run_time_ms': run_time_ms
-                            })
-                        except Exception:
-                            pass
+                        rows.append({
+                            'timestamp': timestamp,
+                            'cpu': cpu,
+                            'task_name': task_name,
+                            'pid': pid,
+                            'wait_time_ms': wait_time_ms,
+                            'sched_delay_ms': sch_delay_ms,
+                            'run_time_ms': run_time_ms
+                        })
 
-            return pd.DataFrame(rows) if rows else None
+                    except Exception as e:
+                        if self.debug_mode:
+                            print(f"DEBUG: Error parsing timeline line: {line}")
+                            print(f"DEBUG: Exception: {e}")
+                        continue
 
+            if not rows:
+                print(f"No valid timeline data rows found in: {file_path}")
+                return None
+
+            return rows
         except Exception as e:
             print(f"Error parsing sched timeline file {file_path}: {e}")
+            if self.debug_mode:
+                import traceback
+                traceback.print_exc()
             return None
+
+
+    def _get_sched_timeline(self, bench_name: str, sample_rate=1.0):
+        if bench_name not in self.sched_timeline_paths:
+            return None
+
+        rows = self._parse_sched_timeline(self.sched_timeline_paths[bench_name])
+        if not rows:
+            return None
+
+        import random
+        if sample_rate < 1.0:
+            sample_size = max(1000, int(len(rows) * sample_rate))
+            rows = random.sample(rows, min(sample_size, len(rows)))
+
+        import pandas as pd
+        return pd.DataFrame(rows)
 
 
     def _extract_number_with_unit(self, text: str) -> Optional[float]:
@@ -359,39 +425,64 @@ class BenchmarkVisualizer:
             return None
 
 
-    def _get_perf_metric_value(self, data: pd.DataFrame, metric_name: str) -> Optional[float]:
-        try:
-            metric_row = data[data['event'].str.contains(metric_name, na=False, case=False)]
-            if not metric_row.empty:
-                value_str = metric_row.iloc[0]['value']
-                cleaned_value = value_str.replace(',', '')
-                return float(cleaned_value) if cleaned_value else None
-        except (ValueError, AttributeError, IndexError):
-            pass
-        return None
+    def _get_perf_metric_value(self, data, metric_name: str) -> Optional[float]:
+        if isinstance(data, list):  # If data is a list of dicts
+            for row in data:
+                if metric_name.lower() in row.get('event', '').lower():
+                    try:
+                        value_str = row.get('value', '0')
+                        cleaned_value = value_str.replace(',', '')
+                        return float(cleaned_value) if cleaned_value else None
+                    except (ValueError, TypeError):
+                        pass
+            return None
+        else:  # If data is a dataframe
+            try:
+                metric_row = data[data['event'].str.contains(metric_name, na=False, case=False)]
+                if not metric_row.empty:
+                    value_str = metric_row.iloc[0]['value']
+                    cleaned_value = value_str.replace(',', '')
+                    return float(cleaned_value) if cleaned_value else None
+            except (ValueError, AttributeError, IndexError):
+                pass
+            return None
 
 
     def plot_execution_times(self):
-        if not self.hyperfine_data:
+        if not self.hyperfine_paths:
             print("No hyperfine timing data available for plotting.")
             return
+
+        import matplotlib.pyplot as plt
+        import numpy as np
+        import pandas as pd
 
         benchmarks = []
         means = []
         stds = []
+        distributions = []
+        labels = []
 
-        for bench_name, data in self.hyperfine_data.items():
-            if isinstance(data, dict) and 'json' in data:
+        for bench_name in self.hyperfine_paths:
+            data = self._load_hyperfine_data_for_bench(bench_name)
+
+            if 'json' in data:
                 results = data['json'].get('results', [])
                 if results:
                     result = results[0]  # First (and usually only) result
                     benchmarks.append(bench_name)
                     means.append(result.get('mean', 0))
                     stds.append(result.get('stddev', 0))
-            elif isinstance(data, pd.DataFrame) and 'mean' in data.columns:
+            elif 'df' in data and 'mean' in data['df'].columns:
                 benchmarks.append(bench_name)
-                means.append(data['mean'].iloc[0])
-                stds.append(data['stddev'].iloc[0] if 'stddev' in data.columns else 0)
+                means.append(data['df']['mean'].iloc[0])
+                stds.append(data['df']['stddev'].iloc[0] if 'stddev' in data['df'].columns else 0)
+
+            if 'df' in data and 'times' in data['df'].columns:
+                distributions.append(data['df']['times'].values)
+                labels.append(bench_name)
+
+            del data
 
         if not benchmarks:
             print("No timing data found for execution time plots.")
@@ -410,13 +501,6 @@ class BenchmarkVisualizer:
             ax1.text(bar.get_x() + bar.get_width()/2., height + std,
                     f'{mean:.3f}s', ha='center', va='bottom', fontsize=8)
 
-        distributions = []
-        labels = []
-        for bench_name, data in self.hyperfine_data.items():
-            if isinstance(data, pd.DataFrame) and 'times' in data.columns:
-                distributions.append(data['times'].values)
-                labels.append(bench_name)
-
         if distributions:
             ax2.boxplot(distributions, labels=labels)
             ax2.set_xlabel('Benchmark')
@@ -430,21 +514,26 @@ class BenchmarkVisualizer:
 
         plt.tight_layout()
         plt.savefig(self.output_dir / "execution_times.png", dpi=300, bbox_inches='tight')
-        plt.close()
+        plt.close(fig)
         print("✓ Generated execution_times.png")
+        gc.collect()
 
 
     def plot_resource_usage(self):
-        if self.resource_data is None or self.resource_data.empty:
+        resource_data = self._load_resource_data()
+        if resource_data is None or resource_data.empty:
             print("No resource usage data available for plotting.")
             return
 
+        import matplotlib.pyplot as plt
+        import numpy as np
+
         fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 10))
 
-        benchmarks = self.resource_data['benchmark'].values
+        benchmarks = resource_data['benchmark'].values
 
-        user_time = self.resource_data['user_time'].values
-        system_time = self.resource_data['system_time'].values
+        user_time = resource_data['user_time'].values
+        system_time = resource_data['system_time'].values
 
         x = np.arange(len(benchmarks))
         width = 0.35
@@ -458,7 +547,7 @@ class BenchmarkVisualizer:
         ax1.set_xticklabels(benchmarks, rotation=45)
         ax1.legend()
 
-        memory_mb = self.resource_data['max_rss_kb'].values / 1024
+        memory_mb = resource_data['max_rss_kb'].values / 1024
         bars = ax2.bar(benchmarks, memory_mb, alpha=0.7)
         ax2.set_xlabel('Benchmark')
         ax2.set_ylabel('Peak Memory Usage (MB)')
@@ -470,7 +559,7 @@ class BenchmarkVisualizer:
             ax2.text(bar.get_x() + bar.get_width()/2., height,
                     f'{mem:.1f}MB', ha='center', va='bottom', fontsize=8)
 
-        total_time = self.resource_data['elapsed_time'].values
+        total_time = resource_data['elapsed_time'].values
         cpu_time = user_time + system_time
         cpu_efficiency = (cpu_time / total_time) * 100
 
@@ -481,9 +570,9 @@ class BenchmarkVisualizer:
         ax3.tick_params(axis='x', rotation=45)
         ax3.set_ylim(0, 100)
 
-        if 'datetime' in self.resource_data.columns:
-            ax4.plot(self.resource_data['datetime'], total_time, 'o-', label='Elapsed Time')
-            ax4.plot(self.resource_data['datetime'], cpu_time, 's-', label='CPU Time')
+        if 'datetime' in resource_data.columns:
+            ax4.plot(resource_data['datetime'], total_time, 'o-', label='Elapsed Time')
+            ax4.plot(resource_data['datetime'], cpu_time, 's-', label='CPU Time')
             ax4.set_xlabel('Time')
             ax4.set_ylabel('Time (seconds)')
             ax4.set_title('Execution Timeline')
@@ -496,17 +585,24 @@ class BenchmarkVisualizer:
 
         plt.tight_layout()
         plt.savefig(self.output_dir / "resource_usage.png", dpi=300, bbox_inches='tight')
-        plt.close()
+        plt.close(fig)
         print("✓ Generated resource_usage.png")
+
+        del resource_data
+        gc.collect()
 
 
     def plot_performance_counters(self):
-        if not self.perf_counters:
+        if not self.perf_counter_paths:
             print("No performance counter data available for plotting.")
             return
 
+        import matplotlib.pyplot as plt
+        import numpy as np
+        import seaborn as sns
+
         metrics = ['cycles', 'instructions', 'cache-references', 'cache-misses',
-                  'branch-instructions', 'branch-misses', 'L1-dcache-loads', 'L1-dcache-load-misses']
+                'branch-instructions', 'branch-misses', 'L1-dcache-loads', 'L1-dcache-load-misses']
 
         n_metrics = len(metrics)
         cols = 3
@@ -526,11 +622,14 @@ class BenchmarkVisualizer:
             benchmark_names = []
             values = []
 
-            for bench_name, data in self.perf_counters.items():
-                value = self._get_perf_metric_value(data, metric)
-                if value is not None:
-                    benchmark_names.append(bench_name)
-                    values.append(value)
+            for bench_name in self.perf_counter_paths:
+                data = self._get_perf_data(bench_name)
+                if data is not None:
+                    value = self._get_perf_metric_value(data, metric)
+                    if value is not None:
+                        benchmark_names.append(bench_name)
+                        values.append(value)
+                    del data
 
             if benchmark_names and values:
                 bars = axes[i].bar(benchmark_names, values, alpha=0.7)
@@ -551,10 +650,10 @@ class BenchmarkVisualizer:
                         else:
                             label = f'{val:.0f}'
                         ax.text(bar.get_x() + bar.get_width()/2., height,
-                               label, ha='center', va='bottom', fontsize=8)
+                            label, ha='center', va='bottom', fontsize=8)
             else:
                 axes[i].text(0.5, 0.5, f'No {metric} data',
-                           transform=axes[i].transAxes, ha='center', va='center')
+                        transform=axes[i].transAxes, ha='center', va='center')
                 axes[i].set_title(f'{metric.replace("-", " ").title()} (No Data)')
 
         # Hide unused subplots
@@ -563,14 +662,18 @@ class BenchmarkVisualizer:
 
         plt.tight_layout()
         plt.savefig(self.output_dir / "performance_counters.png", dpi=300, bbox_inches='tight')
-        plt.close()
+        plt.close(fig)
         print("✓ Generated performance_counters.png")
+        gc.collect()
 
 
     def plot_context_switches(self):
-        if not self.context_stats:
+        if not self.context_stats_paths:
             print("No context switch data available for plotting.")
             return
+
+        import matplotlib.pyplot as plt
+        import numpy as np
 
         fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 10))
 
@@ -580,15 +683,16 @@ class BenchmarkVisualizer:
         page_faults = []
         task_clock = []
 
-        for bench_name, data in self.context_stats.items():
-            benchmarks.append(bench_name)
-
-            context_switches.append(self._get_perf_metric_value(data, 'context-switches') or 0)
-            cpu_migrations.append(self._get_perf_metric_value(data, 'cpu-migrations') or 0)
-            page_faults.append(self._get_perf_metric_value(data, 'page-faults') or 0)
-
-            tc_value = self._get_perf_metric_value(data, 'task-clock')
-            task_clock.append(tc_value or 0)
+        for bench_name in self.context_stats_paths:
+            data = self._get_context_stats(bench_name)
+            if data is not None:
+                benchmarks.append(bench_name)
+                context_switches.append(self._get_perf_metric_value(data, 'context-switches') or 0)
+                cpu_migrations.append(self._get_perf_metric_value(data, 'cpu-migrations') or 0)
+                page_faults.append(self._get_perf_metric_value(data, 'page-faults') or 0)
+                tc_value = self._get_perf_metric_value(data, 'task-clock')
+                task_clock.append(tc_value or 0)
+                del data
 
         if not benchmarks:
             print("No context switch data found for plotting.")
@@ -614,7 +718,7 @@ class BenchmarkVisualizer:
 
         if any(tc > 0 for tc in task_clock):
             cs_per_sec = [cs / (tc / 1000) if tc > 0 else 0
-                         for cs, tc in zip(context_switches, task_clock)]
+                        for cs, tc in zip(context_switches, task_clock)]
             ax4.bar(benchmarks, cs_per_sec, alpha=0.7, color='green')
             ax4.set_xlabel('Benchmark')
             ax4.set_ylabel('Context Switches/sec')
@@ -627,16 +731,21 @@ class BenchmarkVisualizer:
 
         plt.tight_layout()
         plt.savefig(self.output_dir / "context_switches.png", dpi=300, bbox_inches='tight')
-        plt.close()
+        plt.close(fig)
         print("✓ Generated context_switches.png")
+        gc.collect()
 
 
     def plot_scheduling_latency(self):
-        if not self.sched_latency:
+        if not self.sched_latency_paths:
             print("No scheduling latency data available for plotting.")
             return
 
-        num_benchmarks = len(self.sched_latency)
+        import matplotlib.pyplot as plt
+        import numpy as np
+        import pandas as pd
+
+        num_benchmarks = len(self.sched_latency_paths)
         cols = min(2, num_benchmarks)
         rows = (num_benchmarks + cols - 1) // cols
 
@@ -648,19 +757,31 @@ class BenchmarkVisualizer:
         else:
             axes = axes.flatten()
 
-        for i, (bench_name, data) in enumerate(self.sched_latency.items()):
+        latency_summary_data = []
+
+        for i, bench_name in enumerate(self.sched_latency_paths):
             if i >= len(axes):
                 break
 
             ax = axes[i]
+            data = self._get_sched_latency(bench_name)
 
-            if not data.empty and 'avg_delay_ms' in data.columns and 'max_delay_ms' in data.columns:
+            if data is not None and not data.empty and 'avg_delay_ms' in data.columns and 'max_delay_ms' in data.columns:
+                latency_summary_data.append({
+                    'bench_name': bench_name,
+                    'avg_latency': data['avg_delay_ms'].mean(),
+                    'max_latency': data['max_delay_ms'].max(),
+                    'total_switches': data['switches'].sum(),
+                    'worst_task': data.loc[data['max_delay_ms'].idxmax()]['task'],
+                    'worst_latency': data['max_delay_ms'].max()
+                })
+
                 sizes = data['switches'].values
                 sizes = 20 + (sizes - sizes.min()) / (sizes.max() - sizes.min() + 0.1) * 100
 
                 scatter = ax.scatter(data['avg_delay_ms'], data['max_delay_ms'],
-                                   s=sizes, alpha=0.6, c=data['switches'],
-                                   cmap='viridis')
+                                s=sizes, alpha=0.6, c=data['switches'],
+                                cmap='viridis')
                 ax.set_xlabel('Average Delay (ms)')
                 ax.set_ylabel('Maximum Delay (ms)')
                 ax.set_title(f'{bench_name} - Scheduling Latency')
@@ -674,7 +795,7 @@ class BenchmarkVisualizer:
                         z = np.polyfit(data['avg_delay_ms'], data['max_delay_ms'], 1)
                         p = np.poly1d(z)
                         ax.plot(data['avg_delay_ms'], p(data['avg_delay_ms']),
-                               "r--", alpha=0.8, linewidth=1)
+                            "r--", alpha=0.8, linewidth=1)
                     except:
                         pass
 
@@ -690,100 +811,101 @@ class BenchmarkVisualizer:
                                 fontsize=8, alpha=0.7)
             else:
                 ax.text(0.5, 0.5, f'No latency data for\n{bench_name}',
-                       transform=ax.transAxes, ha='center', va='center')
+                    transform=ax.transAxes, ha='center', va='center')
                 ax.set_title(f'{bench_name} - No Data')
 
-        for i in range(len(self.sched_latency), len(axes)):
+            del data
+
+        for i in range(len(self.sched_latency_paths), len(axes)):
             axes[i].set_visible(False)
 
         plt.tight_layout()
         plt.savefig(self.output_dir / "scheduling_latency.png", dpi=300, bbox_inches='tight')
-        plt.close()
+        plt.close(fig)
         print("✓ Generated scheduling_latency.png")
 
-        self._plot_latency_summary()
-        self._plot_task_latency_distribution()
+        if latency_summary_data:
+            self._plot_latency_summary(latency_summary_data)
+            self._plot_task_latency_distribution()
+
+        gc.collect()
 
 
-    def _plot_latency_summary(self):
-        if not self.sched_latency:
+    def _plot_latency_summary(self, summary_data):
+        if not summary_data:
             return
+
+        import matplotlib.pyplot as plt
+        import numpy as np
 
         fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 10))
 
-        benchmarks = []
-        avg_latencies = []
-        max_latencies = []
-        total_switches = []
-        worst_task_latencies = []
-        worst_tasks = []
+        benchmarks = [data['bench_name'] for data in summary_data]
+        avg_latencies = [data['avg_latency'] for data in summary_data]
+        max_latencies = [data['max_latency'] for data in summary_data]
+        total_switches = [data['total_switches'] for data in summary_data]
+        worst_task_latencies = [data['worst_latency'] for data in summary_data]
+        worst_tasks = [data['worst_task'] for data in summary_data]
 
-        for bench_name, data in self.sched_latency.items():
-            if not data.empty:
-                benchmarks.append(bench_name)
-                avg_latencies.append(data['avg_delay_ms'].mean())
-                max_latencies.append(data['max_delay_ms'].max())
-                total_switches.append(data['switches'].sum())
+        bars1 = ax1.bar(benchmarks, avg_latencies, alpha=0.7)
+        ax1.set_xlabel('Benchmark')
+        ax1.set_ylabel('Average Scheduling Latency (ms)')
+        ax1.set_title('Average Scheduling Latency Comparison')
+        ax1.tick_params(axis='x', rotation=45)
 
-                worst_task_idx = data['max_delay_ms'].idxmax()
-                worst_task = data.loc[worst_task_idx]
-                worst_task_latencies.append(worst_task['max_delay_ms'])
-                worst_tasks.append(worst_task['task'])
+        for bar, val in zip(bars1, avg_latencies):
+            height = bar.get_height()
+            ax1.text(bar.get_x() + bar.get_width()/2., height,
+                    f'{val:.3f}ms', ha='center', va='bottom', fontsize=8)
 
-        if benchmarks:
-            bars1 = ax1.bar(benchmarks, avg_latencies, alpha=0.7)
-            ax1.set_xlabel('Benchmark')
-            ax1.set_ylabel('Average Scheduling Latency (ms)')
-            ax1.set_title('Average Scheduling Latency Comparison')
-            ax1.tick_params(axis='x', rotation=45)
+        bars2 = ax2.bar(benchmarks, worst_task_latencies, alpha=0.7, color='red')
+        ax2.set_xlabel('Benchmark')
+        ax2.set_ylabel('Worst Task Latency (ms)')
+        ax2.set_title('Worst Task Scheduling Latency')
+        ax2.tick_params(axis='x', rotation=45)
 
-            for bar, val in zip(bars1, avg_latencies):
-                height = bar.get_height()
-                ax1.text(bar.get_x() + bar.get_width()/2., height,
-                        f'{val:.3f}ms', ha='center', va='bottom', fontsize=8)
+        for i, (bar, val, task) in enumerate(zip(bars2, worst_task_latencies, worst_tasks)):
+            height = bar.get_height()
+            task_short = task[:10] + '...' if len(task) > 10 else task
+            ax2.text(bar.get_x() + bar.get_width()/2., height,
+                    f'{val:.3f}ms\n{task_short}', ha='center', va='bottom', fontsize=8)
 
-            bars2 = ax2.bar(benchmarks, worst_task_latencies, alpha=0.7, color='red')
-            ax2.set_xlabel('Benchmark')
-            ax2.set_ylabel('Worst Task Latency (ms)')
-            ax2.set_title('Worst Task Scheduling Latency')
-            ax2.tick_params(axis='x', rotation=45)
+        bars3 = ax3.bar(benchmarks, total_switches, alpha=0.7, color='green')
+        ax3.set_xlabel('Benchmark')
+        ax3.set_ylabel('Total Context Switches')
+        ax3.set_title('Total Context Switches')
+        ax3.tick_params(axis='x', rotation=45)
 
-            for i, (bar, val, task) in enumerate(zip(bars2, worst_task_latencies, worst_tasks)):
-                height = bar.get_height()
-                task_short = task[:10] + '...' if len(task) > 10 else task
-                ax2.text(bar.get_x() + bar.get_width()/2., height,
-                        f'{val:.3f}ms\n{task_short}', ha='center', va='bottom', fontsize=8)
+        ax4.scatter(total_switches, worst_task_latencies, alpha=0.7, s=60)
+        ax4.set_xlabel('Total Context Switches')
+        ax4.set_ylabel('Worst Task Latency (ms)')
+        ax4.set_title('Latency vs Context Switches')
 
-            bars3 = ax3.bar(benchmarks, total_switches, alpha=0.7, color='green')
-            ax3.set_xlabel('Benchmark')
-            ax3.set_ylabel('Total Context Switches')
-            ax3.set_title('Total Context Switches')
-            ax3.tick_params(axis='x', rotation=45)
-
-            ax4.scatter(total_switches, worst_task_latencies, alpha=0.7, s=60)
-            ax4.set_xlabel('Total Context Switches')
-            ax4.set_ylabel('Worst Task Latency (ms)')
-            ax4.set_title('Latency vs Context Switches')
-
-            for i, bench in enumerate(benchmarks):
-                ax4.annotate(bench[:10],
-                            (total_switches[i], worst_task_latencies[i]),
-                            xytext=(5, 5), textcoords='offset points',
-                            fontsize=8, alpha=0.7)
+        for i, bench in enumerate(benchmarks):
+            ax4.annotate(bench[:10],
+                        (total_switches[i], worst_task_latencies[i]),
+                        xytext=(5, 5), textcoords='offset points',
+                        fontsize=8, alpha=0.7)
 
         plt.tight_layout()
         plt.savefig(self.output_dir / "latency_summary.png", dpi=300, bbox_inches='tight')
-        plt.close()
+        plt.close(fig)
         print("✓ Generated latency_summary.png")
 
 
     def _plot_task_latency_distribution(self):
-        if not self.sched_latency:
+        if not self.sched_latency_paths:
             return
 
+        import matplotlib.pyplot as plt
+        import numpy as np
+        import pandas as pd
+
         latency_data = []
-        for bench_name, data in self.sched_latency.items():
-            if not data.empty:
+
+        for bench_name in self.sched_latency_paths:
+            data = self._get_sched_latency(bench_name)
+            if data is not None and not data.empty:
                 top_tasks = data.nlargest(5, 'max_delay_ms')
                 for _, row in top_tasks.iterrows():
                     latency_data.append({
@@ -793,6 +915,7 @@ class BenchmarkVisualizer:
                         'max_delay': row['max_delay_ms'],
                         'switches': row['switches']
                     })
+                del data
 
         if not latency_data:
             return
@@ -804,8 +927,8 @@ class BenchmarkVisualizer:
         fig, ax = plt.subplots(figsize=(12, 8))
 
         task_labels = [f"{row['task'][:15]}...\n({row['benchmark']})" if len(row['task']) > 15
-                      else f"{row['task']}\n({row['benchmark']})"
-                      for _, row in top_latency_tasks.iterrows()]
+                    else f"{row['task']}\n({row['benchmark']})"
+                    for _, row in top_latency_tasks.iterrows()]
 
         x = np.arange(len(task_labels))
         width = 0.35
@@ -818,7 +941,7 @@ class BenchmarkVisualizer:
 
         for i, switches in enumerate(top_latency_tasks['switches']):
             ax.text(i, 0.1, f"{switches} sw", ha='center', va='bottom',
-                   fontsize=8, rotation=90, alpha=0.7)
+                fontsize=8, rotation=90, alpha=0.7)
 
         ax.set_ylabel('Delay (ms)')
         ax.set_title('Top Tasks by Scheduling Latency')
@@ -828,56 +951,81 @@ class BenchmarkVisualizer:
 
         plt.tight_layout()
         plt.savefig(self.output_dir / "task_latency_distribution.png", dpi=300, bbox_inches='tight')
-        plt.close()
+        plt.close(fig)
         print("✓ Generated task_latency_distribution.png")
+
+        del latency_df, top_latency_tasks
+        gc.collect()
 
 
     def plot_correlation_analysis(self):
+        import pandas as pd
+        import numpy as np
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+
+        benchmarks = set(list(self.hyperfine_paths.keys()) +
+                        list(self.perf_counter_paths.keys()) +
+                        list(self.context_stats_paths.keys()))
+
+        if len(benchmarks) > 20:
+            print("Too many benchmarks for correlation analysis, limiting to 20")
+            benchmarks = list(benchmarks)[:20]
+
         correlation_data = []
 
-        for bench_name in set(list(self.hyperfine_data.keys()) +
-                             list(self.perf_counters.keys()) +
-                             list(self.context_stats.keys())):
+        for bench_name in benchmarks:
             row = {'benchmark': bench_name}
 
-            if bench_name in self.hyperfine_data:
-                data = self.hyperfine_data[bench_name]
-                if isinstance(data, dict) and 'json' in data:
-                    results = data['json'].get('results', [])
+            if bench_name in self.hyperfine_paths:
+                hyper_data = self._load_hyperfine_data_for_bench(bench_name)
+                if 'json' in hyper_data:
+                    results = hyper_data['json'].get('results', [])
                     if results:
                         result = results[0]
                         row['execution_time'] = result.get('mean', 0)
                         row['execution_std'] = result.get('stddev', 0)
+                del hyper_data
 
-            if self.resource_data is not None:
-                resource_row = self.resource_data[
-                    self.resource_data['benchmark'] == bench_name
+            resource_data = self._load_resource_data()
+            if resource_data is not None:
+                resource_row = resource_data[
+                    resource_data['benchmark'] == bench_name
                 ]
                 if not resource_row.empty:
                     row['user_time'] = resource_row.iloc[0]['user_time']
                     row['system_time'] = resource_row.iloc[0]['system_time']
                     row['memory_mb'] = resource_row.iloc[0]['max_rss_kb'] / 1024
+                del resource_row
+            del resource_data
 
-            if bench_name in self.perf_counters:
-                data = self.perf_counters[bench_name]
-                row['cycles'] = self._get_perf_metric_value(data, 'cycles')
-                row['instructions'] = self._get_perf_metric_value(data, 'instructions')
-                row['cache_references'] = self._get_perf_metric_value(data, 'cache-references')
-                row['cache_misses'] = self._get_perf_metric_value(data, 'cache-misses')
+            if bench_name in self.perf_counter_paths:
+                perf_data = self._get_perf_data(bench_name)
+                if perf_data is not None:
+                    row['cycles'] = self._get_perf_metric_value(perf_data, 'cycles')
+                    row['instructions'] = self._get_perf_metric_value(perf_data, 'instructions')
+                    row['cache_references'] = self._get_perf_metric_value(perf_data, 'cache-references')
+                    row['cache_misses'] = self._get_perf_metric_value(perf_data, 'cache-misses')
+                    del perf_data
 
-            if bench_name in self.context_stats:
-                data = self.context_stats[bench_name]
-                row['context_switches'] = self._get_perf_metric_value(data, 'context-switches')
-                row['cpu_migrations'] = self._get_perf_metric_value(data, 'cpu-migrations')
+            if bench_name in self.context_stats_paths:
+                context_data = self._get_context_stats(bench_name)
+                if context_data is not None:
+                    row['context_switches'] = self._get_perf_metric_value(context_data, 'context-switches')
+                    row['cpu_migrations'] = self._get_perf_metric_value(context_data, 'cpu-migrations')
+                    del context_data
 
-            if bench_name in self.sched_latency:
-                sched_data = self.sched_latency[bench_name]
-                if not sched_data.empty:
+            if bench_name in self.sched_latency_paths:
+                sched_data = self._get_sched_latency(bench_name)
+                if sched_data is not None and not sched_data.empty:
                     row['avg_sched_latency'] = sched_data['avg_delay_ms'].mean()
                     row['max_sched_latency'] = sched_data['max_delay_ms'].max()
                     row['total_switches'] = sched_data['switches'].sum()
+                    del sched_data
 
             correlation_data.append(row)
+
+            gc.collect()
 
         if len(correlation_data) > 1:
             df = pd.DataFrame(correlation_data)
@@ -892,108 +1040,210 @@ class BenchmarkVisualizer:
                     correlation_matrix = corr_df.corr()
 
                     sns.heatmap(correlation_matrix, annot=True, cmap='coolwarm', center=0,
-                               square=True, ax=ax, cbar_kws={'label': 'Correlation Coefficient'})
+                            square=True, ax=ax, cbar_kws={'label': 'Correlation Coefficient'})
                     ax.set_title('Correlation Matrix - Performance Metrics')
 
                     plt.tight_layout()
                     plt.savefig(self.output_dir / "correlation_analysis.png", dpi=300, bbox_inches='tight')
-                    plt.close()
+                    plt.close(fig)
                     print("✓ Generated correlation_analysis.png")
+
+                    del correlation_matrix
                 else:
                     print("Insufficient numeric data for correlation analysis.")
+
+                del corr_df
             else:
                 print("Insufficient numeric data for correlation analysis.")
+
+            del df
         else:
             print("Insufficient benchmarks for correlation analysis.")
 
+        del correlation_data
+        gc.collect()
+
 
     def plot_sched_timeline(self):
-        if not self.sched_timeline:
+        if not self.sched_timeline_paths:
             print("No scheduling timeline data available for plotting.")
             return
 
-        for bench_name, timeline_data in self.sched_timeline.items():
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        sample_rate = 1.0
+
+        for bench_name in self.sched_timeline_paths:
+            sample_data = self._get_sched_timeline(bench_name, sample_rate=0.01)
+            if sample_data is None or sample_data.empty:
+                continue
+
+            estimated_total = len(sample_data) * 100
+            if estimated_total > 50000:
+                sample_rate = min(1.0, 50000 / estimated_total)
+                print(f"Large timeline dataset detected for {bench_name}, using {sample_rate:.1%} sample")
+            del sample_data
+
+            timeline_data = self._get_sched_timeline(bench_name, sample_rate=sample_rate)
             if timeline_data is None or timeline_data.empty:
                 continue
+
+            print(f"Generating scheduling timeline visualization for {bench_name}...")
 
             fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(15, 10), gridspec_kw={'height_ratios': [3, 1]})
 
             base_time = timeline_data['timestamp'].min()
 
-            timeline_data['relative_ms'] = (timeline_data['timestamp'] - base_time) * 1000
+            relative_ms = (timeline_data['timestamp'] - base_time) * 1000
 
-            task_counts = timeline_data['task_name'].value_counts()
-            top_tasks = task_counts.head(10).index.tolist()
+            cpus = sorted(timeline_data['cpu'].unique())
 
-            top_task_data = timeline_data[timeline_data['task_name'].isin(top_tasks)]
+            task_counts = timeline_data['task_name'].value_counts().head(10)
+            top_tasks = task_counts.index.tolist()
 
             colors = plt.cm.tab10(np.linspace(0, 1, len(top_tasks)))
             task_colors = dict(zip(top_tasks, colors))
 
-            for task in top_tasks:
-                task_subset = top_task_data[top_task_data['task_name'] == task]
+            for cpu in cpus:
+                cpu_data = timeline_data[timeline_data['cpu'] == cpu]
 
-                ax1.scatter(
-                    task_subset['relative_ms'],
-                    [top_tasks.index(task)] * len(task_subset),
-                    s=30,
-                    color=task_colors[task],
-                    label=task,
-                    alpha=0.7
-                )
+                if not cpu_data.empty:
+                    for task in top_tasks:
+                        task_data = cpu_data[cpu_data['task_name'] == task]
+                        if not task_data.empty:
+                            ax1.scatter(
+                                (task_data['timestamp'] - base_time) * 1000,
+                                [cpu] * len(task_data),
+                                color=task_colors[task],
+                                s=30,
+                                alpha=0.7,
+                                label=f"{task}" if cpu == cpus[0] else ""
+                            )
+                            del task_data
 
-                if 'sched_delay_ms' in task_subset.columns:
-                    delays = task_subset['sched_delay_ms'].values
-                    if delays.any():
-                        sizes = 10 + (delays / delays.max() * 100) if delays.max() > 0 else 10
-
-                        ax1.scatter(
-                            task_subset['relative_ms'],
-                            [top_tasks.index(task)] * len(task_subset),
-                            s=sizes,
-                            facecolors='none',
-                            edgecolors='red',
-                            alpha=0.5
+                for _, row in cpu_data.iterrows():
+                    if row['run_time_ms'] > 0.1:  # Only show significant run times
+                        start_ms = (row['timestamp'] - base_time) * 1000
+                        end_ms = start_ms + row['run_time_ms']
+                        ax1.hlines(
+                            y=cpu,
+                            xmin=start_ms,
+                            xmax=end_ms,
+                            colors='gray',
+                            linewidth=2,
+                            alpha=0.3
                         )
 
-            if 'sched_delay_ms' in timeline_data.columns:
-                delays = timeline_data['sched_delay_ms'].values
-                non_zero_delays = delays[delays > 0]
+                del cpu_data
+                gc.collect()
 
+            delays = timeline_data['sched_delay_ms'].values
+            if delays.any():
+                non_zero_delays = delays[delays > 0]
                 if len(non_zero_delays) > 0:
                     ax2.hist(non_zero_delays, bins=30, alpha=0.7)
                     ax2.set_xlabel('Scheduling Delay (ms)')
                     ax2.set_ylabel('Frequency')
                     ax2.set_title('Scheduling Delay Distribution')
-                    ax2.grid(True, alpha=0.3)
 
                     mean_delay = non_zero_delays.mean()
                     median_delay = np.median(non_zero_delays)
                     ax2.axvline(mean_delay, color='red', linestyle='--', alpha=0.8,
-                               label=f'Mean: {mean_delay:.3f}ms')
+                            label=f'Mean: {mean_delay:.3f} ms')
                     ax2.axvline(median_delay, color='green', linestyle='--', alpha=0.8,
-                               label=f'Median: {median_delay:.3f}ms')
+                            label=f'Median: {median_delay:.3f} ms')
                     ax2.legend()
                 else:
-                    ax2.text(0.5, 0.5, 'No scheduling delay data available',
-                            ha='center', va='center', transform=ax2.transAxes)
+                    ax2.text(0.5, 0.5, 'No non-zero scheduling delays found',
+                            transform=ax2.transAxes, ha='center', va='center')
             else:
-                ax2.text(0.5, 0.5, 'No scheduling delay data available',
-                        ha='center', va='center', transform=ax2.transAxes)
+                ax2.text(0.5, 0.5, 'No scheduling delay data found',
+                        transform=ax2.transAxes, ha='center', va='center')
 
-            ax1.set_yticks(range(len(top_tasks)))
-            ax1.set_yticklabels(top_tasks)
-            ax1.set_xlabel('Time from start (ms)')
+            ax1.set_xlabel('Time (ms)')
+            ax1.set_ylabel('CPU')
             ax1.set_title(f'Scheduling Timeline - {bench_name}')
+
+            ax1.set_yticks(cpus)
+            ax1.set_yticklabels([f'CPU {cpu}' for cpu in cpus])
+
+            handles, labels = ax1.get_legend_handles_labels()
+            by_label = dict(zip(labels, handles))
+            ax1.legend(by_label.values(), by_label.keys(),
+                    loc='upper right', fontsize='small')
+
             ax1.grid(True, axis='x', alpha=0.3)
+            ax2.grid(True, alpha=0.3)
 
             plt.tight_layout()
             plt.savefig(self.output_dir / f"{bench_name}_sched_timeline.png", dpi=300, bbox_inches='tight')
-            plt.close()
+            plt.close(fig)
             print(f"✓ Generated {bench_name}_sched_timeline.png")
+
+            self._plot_task_timeline(bench_name, timeline_data, top_tasks, task_colors)
+
+            del timeline_data
+            gc.collect()
+
+
+    def _plot_task_timeline(self, bench_name, timeline_data, top_tasks, task_colors):
+        if timeline_data is None or timeline_data.empty:
+            return
+
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        fig, ax = plt.subplots(figsize=(15, 8))
+
+        base_time = timeline_data['timestamp'].min()
+
+        for i, task in enumerate(top_tasks):
+            task_data = timeline_data[timeline_data['task_name'] == task]
+
+            if not task_data.empty:
+                x = (task_data['timestamp'].values - base_time) * 1000
+                y = [i] * len(task_data)
+                size = task_data['run_time_ms'].values * 10 + 10
+                colors = plt.cm.tab20(task_data['cpu'].values % 20 / 20)
+
+                scatter = ax.scatter(x, y, s=size, c=colors, alpha=0.7)
+
+                if len(task_data) > 1:
+                    sorted_data = task_data.sort_values('timestamp')
+                    ax.plot((sorted_data['timestamp'].values - base_time) * 1000,
+                        [i] * len(sorted_data),
+                        'k-', alpha=0.2)
+                    del sorted_data
+
+                del task_data, x, y, size, colors
+
+        ax.set_yticks(range(len(top_tasks)))
+        ax.set_yticklabels([t[:30] + ('...' if len(t) > 30 else '') for t in top_tasks])
+
+        ax.set_xlabel('Time from start (ms)')
+        ax.set_title(f'Task Activity Timeline - {bench_name}')
+        ax.grid(True, axis='x', alpha=0.3)
+
+        sm = plt.cm.ScalarMappable(cmap=plt.cm.tab20,
+                                norm=plt.Normalize(0, 19))
+        sm.set_array([])
+        cbar = plt.colorbar(sm, ax=ax)
+        cbar.set_label('CPU')
+
+        cpu_ticks = sorted(timeline_data['cpu'].unique())
+        cbar.set_ticks([tick % 20 / 20 for tick in cpu_ticks])
+        cbar.set_ticklabels([f'CPU {tick}' for tick in cpu_ticks])
+
+        plt.tight_layout()
+        plt.savefig(self.output_dir / f"{bench_name}_task_timeline.png", dpi=300, bbox_inches='tight')
+        plt.close(fig)
+        print(f"✓ Generated {bench_name}_task_timeline.png")
+        gc.collect()
 
 
     def generate_summary_report(self):
+        from datetime import datetime
         report_path = self.output_dir / "summary_report.txt"
 
         with open(report_path, 'w') as f:
@@ -1002,23 +1252,26 @@ class BenchmarkVisualizer:
             f.write(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
             f.write(f"Session directory: {self.session_dir}\n\n")
 
-            if self.hyperfine_data:
+            if self.hyperfine_paths:
                 f.write("EXECUTION TIMES\n")
                 f.write("-" * 20 + "\n")
-                for bench_name, data in self.hyperfine_data.items():
-                    if isinstance(data, dict) and 'json' in data:
+                for bench_name in self.hyperfine_paths:
+                    data = self._load_hyperfine_data_for_bench(bench_name)
+                    if 'json' in data:
                         results = data['json'].get('results', [])
                         if results:
                             result = results[0]
                             mean_time = result.get('mean', 0)
                             std_time = result.get('stddev', 0)
                             f.write(f"{bench_name}: {mean_time:.4f}s ± {std_time:.4f}s\n")
+                    del data
                 f.write("\n")
 
-            if self.resource_data is not None and not self.resource_data.empty:
+            resource_data = self._load_resource_data()
+            if resource_data is not None and not resource_data.empty:
                 f.write("RESOURCE USAGE\n")
                 f.write("-" * 20 + "\n")
-                for _, row in self.resource_data.iterrows():
+                for _, row in resource_data.iterrows():
                     bench_name = row['benchmark']
                     memory_mb = row['max_rss_kb'] / 1024
                     cpu_time = row['user_time'] + row['system_time']
@@ -1026,80 +1279,136 @@ class BenchmarkVisualizer:
                     f.write(f"  Peak Memory: {memory_mb:.1f} MB\n")
                     f.write(f"  CPU Time: {cpu_time:.3f}s (User: {row['user_time']:.3f}s, System: {row['system_time']:.3f}s)\n")
                 f.write("\n")
+                del resource_data
 
-            if self.perf_counters:
+            if self.perf_counter_paths:
                 f.write("PERFORMANCE COUNTERS\n")
                 f.write("-" * 25 + "\n")
-                for bench_name, data in self.perf_counters.items():
-                    f.write(f"{bench_name}:\n")
+                for bench_name in self.perf_counter_paths:
+                    data = self._get_perf_data(bench_name)
+                    if data is not None:
+                        f.write(f"{bench_name}:\n")
 
-                    cycles = self._get_perf_metric_value(data, 'cycles')
-                    instructions = self._get_perf_metric_value(data, 'instructions')
-                    cache_refs = self._get_perf_metric_value(data, 'cache-references')
-                    cache_misses = self._get_perf_metric_value(data, 'cache-misses')
+                        cycles = self._get_perf_metric_value(data, 'cycles')
+                        instructions = self._get_perf_metric_value(data, 'instructions')
+                        cache_refs = self._get_perf_metric_value(data, 'cache-references')
+                        cache_misses = self._get_perf_metric_value(data, 'cache-misses')
 
-                    if cycles: f.write(f"  Cycles: {cycles:,.0f}\n")
-                    if instructions: f.write(f"  Instructions: {instructions:,.0f}\n")
-                    if cache_refs: f.write(f"  Cache References: {cache_refs:,.0f}\n")
-                    if cache_misses: f.write(f"  Cache Misses: {cache_misses:,.0f}\n")
+                        if cycles: f.write(f"  Cycles: {cycles:,.0f}\n")
+                        if instructions: f.write(f"  Instructions: {instructions:,.0f}\n")
+                        if cache_refs: f.write(f"  Cache References: {cache_refs:,.0f}\n")
+                        if cache_misses: f.write(f"  Cache Misses: {cache_misses:,.0f}\n")
 
-                    if instructions and cycles:
-                        ipc = instructions / cycles
-                        f.write(f"  IPC: {ipc:.3f}\n")
+                        if instructions and cycles:
+                            ipc = instructions / cycles
+                            f.write(f"  IPC: {ipc:.3f}\n")
 
-                    if cache_refs and cache_misses:
-                        cache_miss_rate = (cache_misses / cache_refs) * 100
-                        f.write(f"  Cache Miss Rate: {cache_miss_rate:.2f}%\n")
+                        if cache_refs and cache_misses:
+                            cache_miss_rate = (cache_misses / cache_refs) * 100
+                            f.write(f"  Cache Miss Rate: {cache_miss_rate:.2f}%\n")
 
-                    f.write("\n")
+                        f.write("\n")
+                        del data
+                        gc.collect()
 
-            if self.sched_latency:
+            if self.sched_latency_paths:
                 f.write("SCHEDULING LATENCY\n")
                 f.write("-" * 20 + "\n")
-                for bench_name, data in self.sched_latency.items():
-                    if not data.empty:
+                for bench_name in self.sched_latency_paths:
+                    data = self._get_sched_latency(bench_name)
+                    if data is not None and not data.empty:
                         avg_latency = data['avg_delay_ms'].mean()
                         max_latency = data['max_delay_ms'].max()
                         total_switches = data['switches'].sum()
                         worst_task_idx = data['max_delay_ms'].idxmax()
                         worst_task = data.loc[worst_task_idx]
-
                         f.write(f"{bench_name}:\n")
                         f.write(f"  Average Latency: {avg_latency:.4f} ms\n")
                         f.write(f"  Maximum Latency: {max_latency:.4f} ms\n")
                         f.write(f"  Worst Task: {worst_task['task']} ({worst_task['max_delay_ms']:.4f} ms)\n")
                         f.write(f"  Total Context Switches: {total_switches}\n")
                         f.write(f"  Tasks Monitored: {len(data)}\n")
+
+                        del data
+                        gc.collect()
                 f.write("\n")
 
-            if self.context_stats:
-                f.write("CONTEXT SWITCHES & MIGRATIONS\n")
-                f.write("-" * 30 + "\n")
-                for bench_name, data in self.context_stats.items():
-                    cs_count = self._get_perf_metric_value(data, 'context-switches')
-                    mig_count = self._get_perf_metric_value(data, 'cpu-migrations')
+                if self.context_stats_paths:
+                    f.write("CONTEXT SWITCHES & MIGRATIONS\n")
+                    f.write("-" * 30 + "\n")
+                    for bench_name in self.context_stats_paths:
+                        data = self._get_context_stats(bench_name)
+                        if data is not None:
+                            cs_count = self._get_perf_metric_value(data, 'context-switches')
+                            mig_count = self._get_perf_metric_value(data, 'cpu-migrations')
 
-                    f.write(f"{bench_name}:")
-                    if cs_count is not None:
-                        f.write(f" {cs_count:.0f} context switches")
-                    if mig_count is not None:
-                        f.write(f", {mig_count:.0f} CPU migrations")
+                            f.write(f"{bench_name}:")
+                            if cs_count is not None:
+                                f.write(f" {cs_count:.0f} context switches")
+                            if mig_count is not None:
+                                f.write(f", {mig_count:.0f} CPU migrations")
+                            f.write("\n")
+
+                            del data
                     f.write("\n")
 
-        print(f"✓ Generated summary report: {report_path}")
+                if self.sched_timeline_paths:
+                    f.write("\nSCHEDULING TIMELINE\n")
+                    f.write("-" * 20 + "\n")
+                    for bench_name in self.sched_timeline_paths:
+                        timeline_data = self._get_sched_timeline(bench_name, sample_rate=0.2)
+                        if timeline_data is not None and not timeline_data.empty:
+                            total_events = len(timeline_data) * (1/0.2)  # Estimate total from sample
+                            unique_tasks = timeline_data['task_name'].nunique()
+                            unique_cpus = timeline_data['cpu'].nunique()
+                            avg_sched_delay = timeline_data['sched_delay_ms'].mean() if 'sched_delay_ms' in timeline_data.columns else 0
+
+                            f.write(f"{bench_name}:\n")
+                            f.write(f"  Events Recorded: {int(total_events):,}\n")
+                            f.write(f"  Unique Tasks: {unique_tasks}\n")
+                            f.write(f"  CPUs Utilized: {unique_cpus}\n")
+                            f.write(f"  Avg Scheduling Delay: {avg_sched_delay:.4f} ms\n")
+
+                            del timeline_data
+                            gc.collect()
+                    f.write("\n")
+
+            print(f"✓ Generated summary report: {report_path}")
+            gc.collect()
 
 
     def generate_all_plots(self):
         print("Generating benchmark visualization plots...")
 
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+
+        plt.style.use('seaborn-v0_8')
+        sns.set_palette("husl")
+
         self.plot_execution_times()
+        gc.collect()
+
         self.plot_resource_usage()
+        gc.collect()
+
         self.plot_performance_counters()
+        gc.collect()
+
         self.plot_context_switches()
+        gc.collect()
+
         self.plot_scheduling_latency()
+        gc.collect()
+
         self.plot_sched_timeline()
+        gc.collect()
+
         self.plot_correlation_analysis()
+        gc.collect()
+
         self.generate_summary_report()
+        gc.collect()
 
         print("\nAll plots generated successfully!")
         print(f"Output directory: {self.output_dir}")
@@ -1154,6 +1463,19 @@ Examples:
         help='DPI for output images (default: 300)'
     )
 
+    parser.add_argument(
+        '--debug',
+        action='store_true',
+        help='Enable debug output'
+    )
+
+    parser.add_argument(
+        '--sample-rate',
+        type=float,
+        default=1.0,
+        help='Sample rate for large datasets (0.0-1.0, default: 1.0)'
+    )
+
     args = parser.parse_args()
 
     session_path = Path(args.session_dir)
@@ -1167,7 +1489,9 @@ Examples:
 
     try:
         visualizer = BenchmarkVisualizer(args.session_dir, args.output)
+        visualizer.debug_mode = args.debug
 
+        import matplotlib.pyplot as plt
         plt.rcParams['figure.dpi'] = args.dpi
         plt.rcParams['savefig.format'] = args.format
 
@@ -1178,21 +1502,28 @@ Examples:
         else:
             if 'execution' in plot_types:
                 visualizer.plot_execution_times()
+                gc.collect()
             if 'resource' in plot_types:
                 visualizer.plot_resource_usage()
+                gc.collect()
             if 'perf' in plot_types:
                 visualizer.plot_performance_counters()
+                gc.collect()
             if 'context' in plot_types:
                 visualizer.plot_context_switches()
+                gc.collect()
             if 'latency' in plot_types:
                 visualizer.plot_scheduling_latency()
+                gc.collect()
             if 'timeline' in plot_types:
                 visualizer.plot_sched_timeline()
+                gc.collect()
             if 'correlation' in plot_types:
                 visualizer.plot_correlation_analysis()
+                gc.collect()
 
             visualizer.generate_summary_report()
-
+            gc.collect()
     except Exception as e:
         print(f"Error: {e}")
         import traceback
@@ -1201,15 +1532,4 @@ Examples:
 
 
 if __name__ == "__main__":
-    try:
-        import matplotlib.pyplot as plt
-        import pandas as pd
-        import numpy as np
-        import seaborn as sns
-    except ImportError as e:
-        print(f"Error: Missing required dependency: {e}")
-        print("\nPlease install required packages:")
-        print("pip install matplotlib pandas numpy seaborn")
-        sys.exit(1)
-
     main()
