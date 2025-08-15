@@ -756,3 +756,4 @@ benchmark_results
 .benchmarks
 target
 .zig-cache
+rust_benchmarks.txt
