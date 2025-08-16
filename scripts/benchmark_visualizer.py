@@ -505,6 +505,11 @@ class BenchmarkVisualizer:
 
         clean_names, name_mapping = self._get_clean_benchmark_names(benchmarks)
 
+        use_log_scale = False
+        if means and max(means) > 0 and min(means) > 0:
+            ratio = max(means) / min(means)
+            use_log_scale = ratio > 10
+
         fig = plt.figure(figsize=(18, 12))
 
         gs = fig.add_gridspec(2, 2, hspace=0.3, wspace=0.3)
@@ -517,9 +522,14 @@ class BenchmarkVisualizer:
         ax1.tick_params(axis='x', rotation=45)
         ax1.grid(True, alpha=0.3)
 
+        if use_log_scale:
+            ax1.set_yscale('log')
+            ax1.set_ylabel('Execution Time (seconds) - Log Scale')
+
         for bar, mean, std in zip(bars, means, stds):
             height = bar.get_height()
-            ax1.text(bar.get_x() + bar.get_width()/2., height + std,
+            offset = std if not use_log_scale else height * 0.1
+            ax1.text(bar.get_x() + bar.get_width()/2., height + offset,
                     f'{mean:.3f}s±{std:.3f}s', ha='center', va='bottom', fontsize=8)
 
         ax2 = fig.add_subplot(gs[0, 1])
@@ -542,6 +552,10 @@ class BenchmarkVisualizer:
                 ax2.set_title('Execution Time Distributions')
                 ax2.tick_params(axis='x', rotation=45)
                 ax2.grid(True, alpha=0.3)
+
+                if use_log_scale:
+                    ax2.set_yscale('log')
+                    ax2.set_ylabel('Execution Time (seconds) - Log Scale')
             else:
                 ax2.text(0.5, 0.5, 'Insufficient data for\ndistribution analysis',
                         transform=ax2.transAxes, ha='center', va='center', fontsize=12)
@@ -564,10 +578,15 @@ class BenchmarkVisualizer:
             ax3.set_title('Min/Max Range with Mean')
             ax3.grid(True, alpha=0.3)
 
+            if use_log_scale:
+                ax3.set_yscale('log')
+                ax3.set_ylabel('Execution Time (seconds) - Log Scale')
+
             for i, (clean_name, mean_val, min_val, max_val) in enumerate(zip(clean_names, means, mins, maxs)):
                 range_val = max_val - min_val
+                offset = mean_val * 0.1 if use_log_scale else 0
                 ax3.annotate(f'Range: {range_val:.4f}s',
-                            xy=(i, mean_val), xytext=(5, 10),
+                            xy=(i, mean_val + offset), xytext=(5, 10),
                             textcoords='offset points', fontsize=8, alpha=0.7)
         else:
             ax3.text(0.5, 0.5, 'No min/max data available',
@@ -679,6 +698,14 @@ class BenchmarkVisualizer:
         ax1.set_xticks(x)
         ax1.set_xticklabels(clean_benchmarks, rotation=45)
         ax1.legend()
+        ax1.grid(True, alpha=0.3)
+
+        all_times = np.concatenate([user_time, system_time])
+        if len(all_times) > 0 and np.max(all_times) > 0 and np.min(all_times[all_times > 0]) > 0:
+            ratio = np.max(all_times) / np.min(all_times[all_times > 0])
+            if ratio > 10:
+                ax1.set_yscale('log')
+                ax1.set_ylabel('Time (seconds) - Log Scale')
 
         memory_mb = resource_data['max_rss_kb'].values / 1024
         bars = ax2.bar(clean_benchmarks, memory_mb, alpha=0.7)
@@ -686,10 +713,18 @@ class BenchmarkVisualizer:
         ax2.set_ylabel('Peak Memory Usage (MB)')
         ax2.set_title('Peak Memory Usage')
         ax2.tick_params(axis='x', rotation=45)
+        ax2.grid(True, alpha=0.3)
+
+        if len(memory_mb) > 0 and np.max(memory_mb) > 0 and np.min(memory_mb[memory_mb > 0]) > 0:
+            ratio = np.max(memory_mb) / np.min(memory_mb[memory_mb > 0])
+            if ratio > 10:
+                ax2.set_yscale('log')
+                ax2.set_ylabel('Peak Memory Usage (MB) - Log Scale')
 
         for bar, mem in zip(bars, memory_mb):
             height = bar.get_height()
-            ax2.text(bar.get_x() + bar.get_width()/2., height,
+            offset = height * 0.1 if ax2.get_yscale() == 'log' else 0
+            ax2.text(bar.get_x() + bar.get_width()/2., height + offset,
                     f'{mem:.1f}MB', ha='center', va='bottom', fontsize=8)
 
         total_time = resource_data['elapsed_time'].values
@@ -702,6 +737,7 @@ class BenchmarkVisualizer:
         ax3.set_title('CPU Utilization Efficiency')
         ax3.tick_params(axis='x', rotation=45)
         ax3.set_ylim(0, 100)
+        ax3.grid(True, alpha=0.3)
 
         if 'datetime' in resource_data.columns:
             ax4.plot(resource_data['datetime'], total_time, 'o-', label='Elapsed Time')
@@ -711,6 +747,14 @@ class BenchmarkVisualizer:
             ax4.set_title('Execution Timeline')
             ax4.legend()
             ax4.tick_params(axis='x', rotation=45)
+            ax4.grid(True, alpha=0.3)
+
+            timeline_times = np.concatenate([total_time, cpu_time])
+            if len(timeline_times) > 0 and np.max(timeline_times) > 0 and np.min(timeline_times[timeline_times > 0]) > 0:
+                ratio = np.max(timeline_times) / np.min(timeline_times[timeline_times > 0])
+                if ratio > 10:
+                    ax4.set_yscale('log')
+                    ax4.set_ylabel('Time (seconds) - Log Scale')
         else:
             ax4.text(0.5, 0.5, 'No timestamp data available',
                     transform=ax4.transAxes, ha='center', va='center')
@@ -772,6 +816,15 @@ class BenchmarkVisualizer:
                 axes[i].set_ylabel('Count')
                 axes[i].set_title(f'{metric.replace("-", " ").title()}')
                 axes[i].tick_params(axis='x', rotation=45)
+                axes[i].grid(True, alpha=0.3)
+
+                if len(values) > 0 and max(values) > 0 and min([v for v in values if v > 0]) > 0:
+                    positive_values = [v for v in values if v > 0]
+                    if positive_values:
+                        ratio = max(positive_values) / min(positive_values)
+                        if ratio > 100:
+                            axes[i].set_yscale('log')
+                            axes[i].set_ylabel('Count - Log Scale')
 
                 if len(values) <= 5:
                     for bar, val in zip(bars, values):
@@ -784,7 +837,9 @@ class BenchmarkVisualizer:
                             label = f'{val/1e3:.1f}K'
                         else:
                             label = f'{val:.0f}'
-                        ax.text(bar.get_x() + bar.get_width()/2., height,
+
+                        offset = height * 0.1 if axes[i].get_yscale() == 'log' else 0
+                        axes[i].text(bar.get_x() + bar.get_width()/2., height + offset,
                             label, ha='center', va='bottom', fontsize=8)
             else:
                 axes[i].text(0.5, 0.5, f'No {metric} data',
@@ -835,32 +890,81 @@ class BenchmarkVisualizer:
 
         clean_names, name_mapping = self._get_clean_benchmark_names(benchmarks)
 
+        use_log_cs = False
+        if context_switches and max(context_switches) > 0 and min([cs for cs in context_switches if cs > 0]) > 0:
+            positive_cs = [cs for cs in context_switches if cs > 0]
+            if positive_cs:
+                ratio = max(positive_cs) / min(positive_cs)
+                use_log_cs = ratio > 100
+
         bars1 = ax1.bar(clean_names, context_switches, alpha=0.7)
         ax1.set_xlabel('Benchmark')
         ax1.set_ylabel('Context Switches')
         ax1.set_title('Context Switches per Benchmark')
         ax1.tick_params(axis='x', rotation=45)
+        ax1.grid(True, alpha=0.3)
+
+        if use_log_cs:
+            ax1.set_yscale('log')
+            ax1.set_ylabel('Context Switches - Log Scale')
+
+        use_log_mig = False
+        if cpu_migrations and max(cpu_migrations) > 0 and min([m for m in cpu_migrations if m > 0]) > 0:
+            positive_mig = [m for m in cpu_migrations if m > 0]
+            if positive_mig:
+                ratio = max(positive_mig) / min(positive_mig)
+                use_log_mig = ratio > 100
 
         bars2 = ax2.bar(clean_names, cpu_migrations, alpha=0.7, color='orange')
         ax2.set_xlabel('Benchmark')
         ax2.set_ylabel('CPU Migrations')
         ax2.set_title('CPU Migrations per Benchmark')
         ax2.tick_params(axis='x', rotation=45)
+        ax2.grid(True, alpha=0.3)
+
+        if use_log_mig:
+            ax2.set_yscale('log')
+            ax2.set_ylabel('CPU Migrations - Log Scale')
+
+        use_log_pf = False
+        if page_faults and max(page_faults) > 0 and min([pf for pf in page_faults if pf > 0]) > 0:
+            positive_pf = [pf for pf in page_faults if pf > 0]
+            if positive_pf:
+                ratio = max(positive_pf) / min(positive_pf)
+                use_log_pf = ratio > 100
 
         bars3 = ax3.bar(clean_names, page_faults, alpha=0.7, color='red')
         ax3.set_xlabel('Benchmark')
         ax3.set_ylabel('Page Faults')
         ax3.set_title('Page Faults per Benchmark')
         ax3.tick_params(axis='x', rotation=45)
+        ax3.grid(True, alpha=0.3)
+
+        if use_log_pf:
+            ax3.set_yscale('log')
+            ax3.set_ylabel('Page Faults - Log Scale')
 
         if any(tc > 0 for tc in task_clock):
             cs_per_sec = [cs / (tc / 1000) if tc > 0 else 0
                         for cs, tc in zip(context_switches, task_clock)]
+
+            use_log_rate = False
+            if cs_per_sec and max(cs_per_sec) > 0 and min([rate for rate in cs_per_sec if rate > 0]) > 0:
+                positive_rates = [rate for rate in cs_per_sec if rate > 0]
+                if positive_rates:
+                    ratio = max(positive_rates) / min(positive_rates)
+                    use_log_rate = ratio > 100
+
             ax4.bar(clean_names, cs_per_sec, alpha=0.7, color='green')
             ax4.set_xlabel('Benchmark')
             ax4.set_ylabel('Context Switches/sec')
             ax4.set_title('Context Switch Rate')
             ax4.tick_params(axis='x', rotation=45)
+            ax4.grid(True, alpha=0.3)
+
+            if use_log_rate:
+                ax4.set_yscale('log')
+                ax4.set_ylabel('Context Switches/sec - Log Scale')
         else:
             ax4.text(0.5, 0.5, 'No timing data for rate calculation',
                     transform=ax4.transAxes, ha='center', va='center')
@@ -926,6 +1030,19 @@ class BenchmarkVisualizer:
                 ax.set_xlabel('Average Delay (ms)')
                 ax.set_ylabel('Maximum Delay (ms)')
                 ax.set_title(f'{clean_name} - Scheduling Latency')
+                ax.grid(True, alpha=0.3)
+
+                avg_delays = data['avg_delay_ms'].values
+                max_delays = data['max_delay_ms'].values
+                all_delays = np.concatenate([avg_delays[avg_delays > 0], max_delays[max_delays > 0]])
+
+                if len(all_delays) > 0:
+                    ratio = np.max(all_delays) / np.min(all_delays)
+                    if ratio > 100:
+                        ax.set_xscale('log')
+                        ax.set_yscale('log')
+                        ax.set_xlabel('Average Delay (ms) - Log Scale')
+                        ax.set_ylabel('Maximum Delay (ms) - Log Scale')
 
                 cbar = plt.colorbar(scatter, ax=ax)
                 cbar.set_label('Number of Switches')
@@ -988,39 +1105,84 @@ class BenchmarkVisualizer:
         worst_task_latencies = [data['worst_latency'] for data in summary_data]
         worst_tasks = [data['worst_task'] for data in summary_data]
 
+        use_log_avg = False
+        if avg_latencies and max(avg_latencies) > 0 and min([l for l in avg_latencies if l > 0]) > 0:
+            positive_avg = [l for l in avg_latencies if l > 0]
+            if positive_avg:
+                ratio = max(positive_avg) / min(positive_avg)
+                use_log_avg = ratio > 10
+
         bars1 = ax1.bar(clean_names, avg_latencies, alpha=0.7)
         ax1.set_xlabel('Benchmark')
         ax1.set_ylabel('Average Scheduling Latency (ms)')
         ax1.set_title('Average Scheduling Latency Comparison')
         ax1.tick_params(axis='x', rotation=45)
+        ax1.grid(True, alpha=0.3)
+
+        if use_log_avg:
+            ax1.set_yscale('log')
+            ax1.set_ylabel('Average Scheduling Latency (ms) - Log Scale')
 
         for bar, val in zip(bars1, avg_latencies):
             height = bar.get_height()
             ax1.text(bar.get_x() + bar.get_width()/2., height,
                     f'{val:.3f}ms', ha='center', va='bottom', fontsize=8)
 
+        use_log_worst = False
+        if worst_task_latencies and max(worst_task_latencies) > 0 and min([l for l in worst_task_latencies if l > 0]) > 0:
+            positive_worst = [l for l in worst_task_latencies if l > 0]
+            if positive_worst:
+                ratio = max(positive_worst) / min(positive_worst)
+                use_log_worst = ratio > 10
+
         bars2 = ax2.bar(clean_names, worst_task_latencies, alpha=0.7, color='red')
         ax2.set_xlabel('Benchmark')
         ax2.set_ylabel('Worst Task Latency (ms)')
         ax2.set_title('Worst Task Scheduling Latency')
         ax2.tick_params(axis='x', rotation=45)
+        ax2.grid(True, alpha=0.3)
+
+        if use_log_worst:
+            ax2.set_yscale('log')
+            ax2.set_ylabel('Worst Task Latency (ms) - Log Scale')
 
         for i, (bar, val, task) in enumerate(zip(bars2, worst_task_latencies, worst_tasks)):
             height = bar.get_height()
             task_short = task[:10] + '...' if len(task) > 10 else task
-            ax2.text(bar.get_x() + bar.get_width()/2., height,
-                    f'{val:.3f}ms\n{task_short}', ha='center', va='bottom', fontsize=8)
+            offset = height * 0.1 if use_log_worst else 0
+            ax2.text(bar.get_x() + bar.get_width()/2., height + offset,
+                f'{val:.3f}ms\n{task_short}', ha='center', va='bottom', fontsize=8)
+
+        use_log_switches = False
+        if total_switches and max(total_switches) > 0 and min([s for s in total_switches if s > 0]) > 0:
+            positive_switches = [s for s in total_switches if s > 0]
+            if positive_switches:
+                ratio = max(positive_switches) / min(positive_switches)
+                use_log_switches = ratio > 100
 
         bars3 = ax3.bar(clean_names, total_switches, alpha=0.7, color='green')
         ax3.set_xlabel('Benchmark')
         ax3.set_ylabel('Total Context Switches')
         ax3.set_title('Total Context Switches')
         ax3.tick_params(axis='x', rotation=45)
+        ax3.grid(True, alpha=0.3)
+
+        if use_log_switches:
+            ax3.set_yscale('log')
+            ax3.set_ylabel('Total Context Switches - Log Scale')
 
         ax4.scatter(total_switches, worst_task_latencies, alpha=0.7, s=60)
         ax4.set_xlabel('Total Context Switches')
         ax4.set_ylabel('Worst Task Latency (ms)')
         ax4.set_title('Latency vs Context Switches')
+        ax4.grid(True, alpha=0.3)
+
+        if use_log_switches:
+            ax4.set_xscale('log')
+            ax4.set_xlabel('Total Context Switches - Log Scale')
+        if use_log_worst:
+            ax4.set_yscale('log')
+            ax4.set_ylabel('Worst Task Latency (ms) - Log Scale')
 
         for i, clean_name in enumerate(clean_names):
             ax4.annotate(clean_name[:16],
@@ -1081,18 +1243,29 @@ class BenchmarkVisualizer:
         avg_delays = top_latency_tasks['avg_delay'].values
         max_delays = top_latency_tasks['max_delay'].values
 
+        all_delays = np.concatenate([avg_delays[avg_delays > 0], max_delays[max_delays > 0]])
+        use_log_task = False
+        if len(all_delays) > 0:
+            ratio = np.max(all_delays) / np.min(all_delays)
+            use_log_task = ratio > 10
+
         ax.bar(x - width/2, avg_delays, width, label='Avg Delay (ms)', alpha=0.7)
         ax.bar(x + width/2, max_delays, width, label='Max Delay (ms)', alpha=0.7, color='red')
-
-        for i, switches in enumerate(top_latency_tasks['switches']):
-            ax.text(i, 0.1, f"{switches} sw", ha='center', va='bottom',
-                fontsize=8, rotation=90, alpha=0.7)
 
         ax.set_ylabel('Delay (ms)')
         ax.set_title('Top Tasks by Scheduling Latency')
         ax.set_xticks(x)
         ax.set_xticklabels(task_labels, rotation=45, ha='right')
         ax.legend()
+        ax.grid(True, alpha=0.3)
+
+        if use_log_task:
+            ax.set_yscale('log')
+            ax.set_ylabel('Delay (ms) - Log Scale')
+
+        for i, switches in enumerate(top_latency_tasks['switches']):
+            ax.text(i, 0.1 if not use_log_task else min(all_delays) * 0.1, f"{switches} sw",
+                    ha='center', va='bottom', fontsize=8, rotation=90, alpha=0.7)
 
         plt.tight_layout()
         plt.savefig(self.output_dir / "task_latency_distribution.png", dpi=300, bbox_inches='tight')
