@@ -460,6 +460,9 @@ class BenchmarkVisualizer:
         benchmarks = []
         means = []
         stds = []
+        medians = []
+        mins = []
+        maxs = []
         distributions = []
         labels = []
 
@@ -473,14 +476,26 @@ class BenchmarkVisualizer:
                     benchmarks.append(bench_name)
                     means.append(result.get('mean', 0))
                     stds.append(result.get('stddev', 0))
-            elif 'df' in data and 'mean' in data['df'].columns:
-                benchmarks.append(bench_name)
-                means.append(data['df']['mean'].iloc[0])
-                stds.append(data['df']['stddev'].iloc[0] if 'stddev' in data['df'].columns else 0)
+                    medians.append(result.get('median', 0))
+                    mins.append(result.get('min', 0))
+                    maxs.append(result.get('max', 0))
 
-            if 'df' in data and 'times' in data['df'].columns:
-                distributions.append(data['df']['times'].values)
-                labels.append(bench_name)
+                    times = result.get('times', [])
+                    if times:
+                        distributions.append(times)
+                        labels.append(bench_name)
+            elif 'df' in data:
+                df = data['df']
+                if not df.empty and 'mean' in df.columns:
+                    benchmarks.append(bench_name)
+                    means.append(df['mean'].iloc[0])
+                    stds.append(df['stddev'].iloc[0] if 'stddev' in df.columns else 0)
+                    medians.append(df['median'].iloc[0] if 'median' in df.columns else df['mean'].iloc[0])
+                    mins.append(df['min'].iloc[0] if 'min' in df.columns else df['mean'].iloc[0])
+                    maxs.append(df['max'].iloc[0] if 'max' in df.columns else df['mean'].iloc[0])
+
+                    distributions.append([df['mean'].iloc[0]] * 10)  # Placeholder distribution
+                    labels.append(bench_name)
 
             del data
 
@@ -488,35 +503,152 @@ class BenchmarkVisualizer:
             print("No timing data found for execution time plots.")
             return
 
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+        clean_names, name_mapping = self._get_clean_benchmark_names(benchmarks)
 
-        bars = ax1.bar(benchmarks, means, yerr=stds, capsize=5, alpha=0.7)
+        fig = plt.figure(figsize=(18, 12))
+
+        gs = fig.add_gridspec(2, 2, hspace=0.3, wspace=0.3)
+
+        ax1 = fig.add_subplot(gs[0, 0])
+        bars = ax1.bar(clean_names, means, yerr=stds, capsize=5, alpha=0.7, color='skyblue', edgecolor='navy')
         ax1.set_xlabel('Benchmark')
         ax1.set_ylabel('Execution Time (seconds)')
-        ax1.set_title('Benchmark Execution Times')
+        ax1.set_title('Mean Execution Times with Standard Deviation')
         ax1.tick_params(axis='x', rotation=45)
+        ax1.grid(True, alpha=0.3)
 
         for bar, mean, std in zip(bars, means, stds):
             height = bar.get_height()
             ax1.text(bar.get_x() + bar.get_width()/2., height + std,
-                    f'{mean:.3f}s', ha='center', va='bottom', fontsize=8)
+                    f'{mean:.3f}s±{std:.3f}s', ha='center', va='bottom', fontsize=8)
 
-        if distributions:
-            ax2.boxplot(distributions, labels=labels)
-            ax2.set_xlabel('Benchmark')
-            ax2.set_ylabel('Execution Time (seconds)')
-            ax2.set_title('Execution Time Distributions')
-            ax2.tick_params(axis='x', rotation=45)
+        ax2 = fig.add_subplot(gs[0, 1])
+        if distributions and any(len(d) > 1 for d in distributions):
+            valid_distributions = []
+            valid_labels = []
+            for dist, label in zip(distributions, labels):
+                if len(dist) > 1:
+                    valid_distributions.append(dist)
+                    clean_label = self._clean_benchmark_name(label)
+                    valid_labels.append(clean_label)
+
+            if valid_distributions:
+                bp = ax2.boxplot(valid_distributions, labels=valid_labels, patch_artist=True)
+                for patch in bp['boxes']:
+                    patch.set_facecolor('lightgreen')
+                    patch.set_alpha(0.7)
+                ax2.set_xlabel('Benchmark')
+                ax2.set_ylabel('Execution Time (seconds)')
+                ax2.set_title('Execution Time Distributions')
+                ax2.tick_params(axis='x', rotation=45)
+                ax2.grid(True, alpha=0.3)
+            else:
+                ax2.text(0.5, 0.5, 'Insufficient data for\ndistribution analysis',
+                        transform=ax2.transAxes, ha='center', va='center', fontsize=12)
+                ax2.set_title('Execution Time Distributions (Insufficient Data)')
         else:
             ax2.text(0.5, 0.5, 'No distribution data available',
-                    transform=ax2.transAxes, ha='center', va='center')
+                    transform=ax2.transAxes, ha='center', va='center', fontsize=12)
             ax2.set_title('Execution Time Distributions (No Data)')
+
+        ax3 = fig.add_subplot(gs[1, 0])
+        if mins and maxs:
+            x_pos = np.arange(len(clean_names))
+            ax3.errorbar(x_pos, means, yerr=[np.array(means) - np.array(mins),
+                                            np.array(maxs) - np.array(means)],
+                        fmt='o', capsize=5, capthick=2, markersize=8, alpha=0.8)
+            ax3.set_xticks(x_pos)
+            ax3.set_xticklabels(clean_names, rotation=45)
+            ax3.set_xlabel('Benchmark')
+            ax3.set_ylabel('Execution Time (seconds)')
+            ax3.set_title('Min/Max Range with Mean')
+            ax3.grid(True, alpha=0.3)
+
+            for i, (clean_name, mean_val, min_val, max_val) in enumerate(zip(clean_names, means, mins, maxs)):
+                range_val = max_val - min_val
+                ax3.annotate(f'Range: {range_val:.4f}s',
+                            xy=(i, mean_val), xytext=(5, 10),
+                            textcoords='offset points', fontsize=8, alpha=0.7)
+        else:
+            ax3.text(0.5, 0.5, 'No min/max data available',
+                    transform=ax3.transAxes, ha='center', va='center', fontsize=12)
+            ax3.set_title('Min/Max Range (No Data)')
+
+        ax4 = fig.add_subplot(gs[1, 1])
+        if means:
+            fastest_time = min(means)
+            relative_performance = [mean / fastest_time for mean in means]
+
+            colors = ['green' if rp == 1.0 else 'orange' if rp < 1.5 else 'red' for rp in relative_performance]
+            bars = ax4.bar(clean_names, relative_performance, color=colors, alpha=0.7)
+
+            ax4.set_xlabel('Benchmark')
+            ax4.set_ylabel('Relative Performance (vs fastest)')
+            ax4.set_title('Relative Performance Comparison')
+            ax4.tick_params(axis='x', rotation=45)
+            ax4.axhline(y=1.0, color='black', linestyle='--', alpha=0.5, label='Baseline (fastest)')
+            ax4.grid(True, alpha=0.3)
+            ax4.legend()
+
+            for bar, rp, mean in zip(bars, relative_performance, means):
+                height = bar.get_height()
+                if rp == 1.0:
+                    label = f'Fastest\n{mean:.3f}s'
+                else:
+                    slower_pct = (rp - 1.0) * 100
+                    label = f'+{slower_pct:.1f}%\n{mean:.3f}s'
+                ax4.text(bar.get_x() + bar.get_width()/2., height,
+                        label, ha='center', va='bottom', fontsize=8)
 
         plt.tight_layout()
         plt.savefig(self.output_dir / "execution_times.png", dpi=300, bbox_inches='tight')
         plt.close(fig)
         print("✓ Generated execution_times.png")
+
+        self._generate_execution_summary_table(benchmarks, clean_names, means, stds, medians, mins, maxs)
+
         gc.collect()
+
+
+    def _generate_execution_summary_table(self, benchmarks, clean_names, means, stds, medians, mins, maxs):
+        import pandas as pd
+
+        if not benchmarks:
+            return
+
+        summary_data = []
+        for i, (original_name, clean_name) in enumerate(zip(benchmarks, clean_names)):
+            row = {
+                'Original Name': original_name,
+                'Display Name': clean_name,
+                'Mean (s)': f"{means[i]:.4f}",
+                'Std Dev (s)': f"{stds[i]:.4f}" if i < len(stds) else "N/A",
+                'Median (s)': f"{medians[i]:.4f}" if i < len(medians) else "N/A",
+                'Min (s)': f"{mins[i]:.4f}" if i < len(mins) else "N/A",
+                'Max (s)': f"{maxs[i]:.4f}" if i < len(maxs) else "N/A",
+                'CV (%)': f"{(stds[i]/means[i]*100):.2f}" if i < len(stds) and means[i] > 0 else "N/A"
+            }
+            summary_data.append(row)
+
+        df = pd.DataFrame(summary_data)
+
+        csv_path = self.output_dir / "execution_times_summary.csv"
+        df.to_csv(csv_path, index=False)
+
+        txt_path = self.output_dir / "execution_times_summary.txt"
+        with open(txt_path, 'w') as f:
+            f.write("EXECUTION TIMES SUMMARY\n")
+            f.write("=" * 50 + "\n\n")
+            f.write(df.to_string(index=False))
+            fastest_idx = means.index(min(means))
+            slowest_idx = means.index(max(means))
+            f.write(f"\n\nFastest benchmark: {clean_names[fastest_idx]} ({means[fastest_idx]:.4f}s)")
+            f.write(f"\nSlowest benchmark: {clean_names[slowest_idx]} ({means[slowest_idx]:.4f}s)")
+            if len(means) > 1:
+                speed_ratio = max(means) / min(means)
+                f.write(f"\nSpeed ratio (slowest/fastest): {speed_ratio:.2f}x")
+
+        print("✓ Generated execution_times_summary.csv and execution_times_summary.txt")
 
 
     def plot_resource_usage(self):
@@ -530,12 +662,13 @@ class BenchmarkVisualizer:
 
         fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 10))
 
-        benchmarks = resource_data['benchmark'].values
+        original_benchmarks = resource_data['benchmark'].values
+        clean_benchmarks, name_mapping = self._get_clean_benchmark_names(original_benchmarks)
 
         user_time = resource_data['user_time'].values
         system_time = resource_data['system_time'].values
 
-        x = np.arange(len(benchmarks))
+        x = np.arange(len(clean_benchmarks))
         width = 0.35
 
         ax1.bar(x - width/2, user_time, width, label='User Time', alpha=0.7)
@@ -544,11 +677,11 @@ class BenchmarkVisualizer:
         ax1.set_ylabel('Time (seconds)')
         ax1.set_title('CPU Time Breakdown')
         ax1.set_xticks(x)
-        ax1.set_xticklabels(benchmarks, rotation=45)
+        ax1.set_xticklabels(clean_benchmarks, rotation=45)
         ax1.legend()
 
         memory_mb = resource_data['max_rss_kb'].values / 1024
-        bars = ax2.bar(benchmarks, memory_mb, alpha=0.7)
+        bars = ax2.bar(clean_benchmarks, memory_mb, alpha=0.7)
         ax2.set_xlabel('Benchmark')
         ax2.set_ylabel('Peak Memory Usage (MB)')
         ax2.set_title('Peak Memory Usage')
@@ -563,7 +696,7 @@ class BenchmarkVisualizer:
         cpu_time = user_time + system_time
         cpu_efficiency = (cpu_time / total_time) * 100
 
-        ax3.bar(benchmarks, cpu_efficiency, alpha=0.7)
+        ax3.bar(clean_benchmarks, cpu_efficiency, alpha=0.7)
         ax3.set_xlabel('Benchmark')
         ax3.set_ylabel('CPU Efficiency (%)')
         ax3.set_title('CPU Utilization Efficiency')
@@ -632,7 +765,9 @@ class BenchmarkVisualizer:
                     del data
 
             if benchmark_names and values:
-                bars = axes[i].bar(benchmark_names, values, alpha=0.7)
+                clean_names, name_mapping = self._get_clean_benchmark_names(benchmark_names)
+
+                bars = axes[i].bar(clean_names, values, alpha=0.7)
                 axes[i].set_xlabel('Benchmark')
                 axes[i].set_ylabel('Count')
                 axes[i].set_title(f'{metric.replace("-", " ").title()}')
@@ -698,19 +833,21 @@ class BenchmarkVisualizer:
             print("No context switch data found for plotting.")
             return
 
-        bars1 = ax1.bar(benchmarks, context_switches, alpha=0.7)
+        clean_names, name_mapping = self._get_clean_benchmark_names(benchmarks)
+
+        bars1 = ax1.bar(clean_names, context_switches, alpha=0.7)
         ax1.set_xlabel('Benchmark')
         ax1.set_ylabel('Context Switches')
         ax1.set_title('Context Switches per Benchmark')
         ax1.tick_params(axis='x', rotation=45)
 
-        bars2 = ax2.bar(benchmarks, cpu_migrations, alpha=0.7, color='orange')
+        bars2 = ax2.bar(clean_names, cpu_migrations, alpha=0.7, color='orange')
         ax2.set_xlabel('Benchmark')
         ax2.set_ylabel('CPU Migrations')
         ax2.set_title('CPU Migrations per Benchmark')
         ax2.tick_params(axis='x', rotation=45)
 
-        bars3 = ax3.bar(benchmarks, page_faults, alpha=0.7, color='red')
+        bars3 = ax3.bar(clean_names, page_faults, alpha=0.7, color='red')
         ax3.set_xlabel('Benchmark')
         ax3.set_ylabel('Page Faults')
         ax3.set_title('Page Faults per Benchmark')
@@ -719,7 +856,7 @@ class BenchmarkVisualizer:
         if any(tc > 0 for tc in task_clock):
             cs_per_sec = [cs / (tc / 1000) if tc > 0 else 0
                         for cs, tc in zip(context_switches, task_clock)]
-            ax4.bar(benchmarks, cs_per_sec, alpha=0.7, color='green')
+            ax4.bar(clean_names, cs_per_sec, alpha=0.7, color='green')
             ax4.set_xlabel('Benchmark')
             ax4.set_ylabel('Context Switches/sec')
             ax4.set_title('Context Switch Rate')
@@ -758,6 +895,8 @@ class BenchmarkVisualizer:
             axes = axes.flatten()
 
         latency_summary_data = []
+        benchmark_names = list(self.sched_latency_paths.keys())
+        clean_benchmark_names, name_mapping = self._get_clean_benchmark_names(benchmark_names)
 
         for i, bench_name in enumerate(self.sched_latency_paths):
             if i >= len(axes):
@@ -765,10 +904,12 @@ class BenchmarkVisualizer:
 
             ax = axes[i]
             data = self._get_sched_latency(bench_name)
+            clean_name = clean_benchmark_names[i]
 
             if data is not None and not data.empty and 'avg_delay_ms' in data.columns and 'max_delay_ms' in data.columns:
                 latency_summary_data.append({
                     'bench_name': bench_name,
+                    'clean_name': clean_name,
                     'avg_latency': data['avg_delay_ms'].mean(),
                     'max_latency': data['max_delay_ms'].max(),
                     'total_switches': data['switches'].sum(),
@@ -784,7 +925,7 @@ class BenchmarkVisualizer:
                                 cmap='viridis')
                 ax.set_xlabel('Average Delay (ms)')
                 ax.set_ylabel('Maximum Delay (ms)')
-                ax.set_title(f'{bench_name} - Scheduling Latency')
+                ax.set_title(f'{clean_name} - Scheduling Latency')
 
                 cbar = plt.colorbar(scatter, ax=ax)
                 cbar.set_label('Number of Switches')
@@ -810,9 +951,9 @@ class BenchmarkVisualizer:
                                 xytext=(5, 5), textcoords='offset points',
                                 fontsize=8, alpha=0.7)
             else:
-                ax.text(0.5, 0.5, f'No latency data for\n{bench_name}',
+                ax.text(0.5, 0.5, f'No latency data for\n{clean_name}',
                     transform=ax.transAxes, ha='center', va='center')
-                ax.set_title(f'{bench_name} - No Data')
+                ax.set_title(f'{clean_name} - No Data')
 
             del data
 
@@ -840,14 +981,14 @@ class BenchmarkVisualizer:
 
         fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 10))
 
-        benchmarks = [data['bench_name'] for data in summary_data]
+        clean_names = [data['clean_name'] for data in summary_data]
         avg_latencies = [data['avg_latency'] for data in summary_data]
         max_latencies = [data['max_latency'] for data in summary_data]
         total_switches = [data['total_switches'] for data in summary_data]
         worst_task_latencies = [data['worst_latency'] for data in summary_data]
         worst_tasks = [data['worst_task'] for data in summary_data]
 
-        bars1 = ax1.bar(benchmarks, avg_latencies, alpha=0.7)
+        bars1 = ax1.bar(clean_names, avg_latencies, alpha=0.7)
         ax1.set_xlabel('Benchmark')
         ax1.set_ylabel('Average Scheduling Latency (ms)')
         ax1.set_title('Average Scheduling Latency Comparison')
@@ -858,7 +999,7 @@ class BenchmarkVisualizer:
             ax1.text(bar.get_x() + bar.get_width()/2., height,
                     f'{val:.3f}ms', ha='center', va='bottom', fontsize=8)
 
-        bars2 = ax2.bar(benchmarks, worst_task_latencies, alpha=0.7, color='red')
+        bars2 = ax2.bar(clean_names, worst_task_latencies, alpha=0.7, color='red')
         ax2.set_xlabel('Benchmark')
         ax2.set_ylabel('Worst Task Latency (ms)')
         ax2.set_title('Worst Task Scheduling Latency')
@@ -870,7 +1011,7 @@ class BenchmarkVisualizer:
             ax2.text(bar.get_x() + bar.get_width()/2., height,
                     f'{val:.3f}ms\n{task_short}', ha='center', va='bottom', fontsize=8)
 
-        bars3 = ax3.bar(benchmarks, total_switches, alpha=0.7, color='green')
+        bars3 = ax3.bar(clean_names, total_switches, alpha=0.7, color='green')
         ax3.set_xlabel('Benchmark')
         ax3.set_ylabel('Total Context Switches')
         ax3.set_title('Total Context Switches')
@@ -881,8 +1022,8 @@ class BenchmarkVisualizer:
         ax4.set_ylabel('Worst Task Latency (ms)')
         ax4.set_title('Latency vs Context Switches')
 
-        for i, bench in enumerate(benchmarks):
-            ax4.annotate(bench[:10],
+        for i, clean_name in enumerate(clean_names):
+            ax4.annotate(clean_name[:16],
                         (total_switches[i], worst_task_latencies[i]),
                         xytext=(5, 5), textcoords='offset points',
                         fontsize=8, alpha=0.7)
@@ -902,14 +1043,18 @@ class BenchmarkVisualizer:
         import pandas as pd
 
         latency_data = []
+        benchmark_names = list(self.sched_latency_paths.keys())
+        clean_names, name_mapping = self._get_clean_benchmark_names(benchmark_names)
 
-        for bench_name in self.sched_latency_paths:
+        for i, bench_name in enumerate(self.sched_latency_paths):
             data = self._get_sched_latency(bench_name)
+            clean_name = clean_names[i]
             if data is not None and not data.empty:
                 top_tasks = data.nlargest(5, 'max_delay_ms')
                 for _, row in top_tasks.iterrows():
                     latency_data.append({
                         'benchmark': bench_name,
+                        'clean_benchmark': clean_name,
                         'task': row['task'],
                         'avg_delay': row['avg_delay_ms'],
                         'max_delay': row['max_delay_ms'],
@@ -926,8 +1071,8 @@ class BenchmarkVisualizer:
 
         fig, ax = plt.subplots(figsize=(12, 8))
 
-        task_labels = [f"{row['task'][:15]}...\n({row['benchmark']})" if len(row['task']) > 15
-                    else f"{row['task']}\n({row['benchmark']})"
+        task_labels = [f"{row['task'][:15]}...\n({row['clean_benchmark']})" if len(row['task']) > 15
+                    else f"{row['task']}\n({row['clean_benchmark']})"
                     for _, row in top_latency_tasks.iterrows()]
 
         x = np.arange(len(task_labels))
@@ -1073,8 +1218,12 @@ class BenchmarkVisualizer:
         import numpy as np
 
         sample_rate = 1.0
+        benchmark_names = list(self.sched_timeline_paths.keys())
+        clean_names, name_mapping = self._get_clean_benchmark_names(benchmark_names)
 
-        for bench_name in self.sched_timeline_paths:
+        for i, bench_name in enumerate(self.sched_timeline_paths):
+            clean_name = clean_names[i]
+
             sample_data = self._get_sched_timeline(bench_name, sample_rate=0.01)
             if sample_data is None or sample_data.empty:
                 continue
@@ -1082,14 +1231,14 @@ class BenchmarkVisualizer:
             estimated_total = len(sample_data) * 100
             if estimated_total > 50000:
                 sample_rate = min(1.0, 50000 / estimated_total)
-                print(f"Large timeline dataset detected for {bench_name}, using {sample_rate:.1%} sample")
+                print(f"Large timeline dataset detected for {clean_name}, using {sample_rate:.1%} sample")
             del sample_data
 
             timeline_data = self._get_sched_timeline(bench_name, sample_rate=sample_rate)
             if timeline_data is None or timeline_data.empty:
                 continue
 
-            print(f"Generating scheduling timeline visualization for {bench_name}...")
+            print(f"Generating scheduling timeline visualization for {clean_name}...")
 
             fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(15, 10), gridspec_kw={'height_ratios': [3, 1]})
 
@@ -1163,7 +1312,7 @@ class BenchmarkVisualizer:
 
             ax1.set_xlabel('Time (ms)')
             ax1.set_ylabel('CPU')
-            ax1.set_title(f'Scheduling Timeline - {bench_name}')
+            ax1.set_title(f'Scheduling Timeline - {clean_name}')
 
             ax1.set_yticks(cpus)
             ax1.set_yticklabels([f'CPU {cpu}' for cpu in cpus])
@@ -1177,17 +1326,18 @@ class BenchmarkVisualizer:
             ax2.grid(True, alpha=0.3)
 
             plt.tight_layout()
-            plt.savefig(self.output_dir / f"{bench_name}_sched_timeline.png", dpi=300, bbox_inches='tight')
+            safe_name = clean_name.replace(' ', '_').replace('/', '_').replace('\\', '_')
+            plt.savefig(self.output_dir / f"{safe_name}_sched_timeline.png", dpi=300, bbox_inches='tight')
             plt.close(fig)
-            print(f"✓ Generated {bench_name}_sched_timeline.png")
+            print(f"✓ Generated {safe_name}_sched_timeline.png")
 
-            self._plot_task_timeline(bench_name, timeline_data, top_tasks, task_colors)
+            self._plot_task_timeline(bench_name, clean_name, timeline_data, top_tasks, task_colors)
 
             del timeline_data
             gc.collect()
 
 
-    def _plot_task_timeline(self, bench_name, timeline_data, top_tasks, task_colors):
+    def _plot_task_timeline(self, bench_name, clean_name, timeline_data, top_tasks, task_colors):
         if timeline_data is None or timeline_data.empty:
             return
 
@@ -1222,7 +1372,7 @@ class BenchmarkVisualizer:
         ax.set_yticklabels([t[:30] + ('...' if len(t) > 30 else '') for t in top_tasks])
 
         ax.set_xlabel('Time from start (ms)')
-        ax.set_title(f'Task Activity Timeline - {bench_name}')
+        ax.set_title(f'Task Activity Timeline - {clean_name}')
         ax.grid(True, axis='x', alpha=0.3)
 
         sm = plt.cm.ScalarMappable(cmap=plt.cm.tab20,
@@ -1236,9 +1386,10 @@ class BenchmarkVisualizer:
         cbar.set_ticklabels([f'CPU {tick}' for tick in cpu_ticks])
 
         plt.tight_layout()
-        plt.savefig(self.output_dir / f"{bench_name}_task_timeline.png", dpi=300, bbox_inches='tight')
+        safe_name = clean_name.replace(' ', '_').replace('/', '_').replace('\\', '_')
+        plt.savefig(self.output_dir / f"{safe_name}_task_timeline.png", dpi=300, bbox_inches='tight')
         plt.close(fig)
-        print(f"✓ Generated {bench_name}_task_timeline.png")
+        print(f"✓ Generated {safe_name}_task_timeline.png")
         gc.collect()
 
 
@@ -1418,6 +1569,78 @@ class BenchmarkVisualizer:
             print("\nGenerated files:")
             for file in sorted(generated_files):
                 print(f"  - {file.name}")
+
+
+    def _clean_benchmark_name(self, bench_name: str) -> str:
+        if not bench_name:
+            return bench_name
+
+        cleaned = bench_name
+
+        patterns_to_remove = [
+            'bench', 'benchmark', 'test', '_test', 'test_',
+            '_bench', 'bench_', '_benchmark', 'benchmark_'
+        ]
+
+        for pattern in patterns_to_remove:
+            if cleaned.lower().startswith(pattern.lower()):
+                cleaned = cleaned[len(pattern):]
+            elif cleaned.lower().endswith(pattern.lower()):
+                cleaned = cleaned[:-len(pattern)]
+            cleaned = cleaned.replace(f'_{pattern}_', '_')
+            cleaned = cleaned.replace(f'_{pattern}', '')
+            cleaned = cleaned.replace(f'{pattern}_', '')
+
+        cleaned = cleaned.replace('_', ' ')
+
+        cleaned = cleaned.replace('-', ' ')
+
+        extensions = ['.exe', '.out', '.bin', '.test']
+        for ext in extensions:
+            if cleaned.lower().endswith(ext):
+                cleaned = cleaned[:-len(ext)]
+
+        import re
+        cleaned = re.sub(r'^.*?target/release/deps/', '', cleaned)
+        cleaned = re.sub(r'^.*?target/debug/deps/', '', cleaned)
+
+        cleaned = re.sub(r'-[a-f0-9]{16}$', '', cleaned)
+        cleaned = re.sub(r'-[a-f0-9]{8,}$', '', cleaned)
+
+        cleaned = ' '.join(cleaned.split())
+
+        cleaned = ' '.join(word.capitalize() for word in cleaned.split())
+
+        if not cleaned or cleaned.isspace():
+            return bench_name
+
+        return cleaned.strip()
+
+
+    def _get_clean_benchmark_names(self, benchmark_list):
+        name_mapping = {}
+        clean_names = []
+
+        for bench_name in benchmark_list:
+            clean_name = self._clean_benchmark_name(bench_name)
+            name_mapping[bench_name] = clean_name
+            clean_names.append(clean_name)
+
+        seen_names = {}
+        final_clean_names = []
+
+        for i, clean_name in enumerate(clean_names):
+            if clean_name in seen_names:
+                seen_names[clean_name] += 1
+                final_name = f"{clean_name} ({seen_names[clean_name]})"
+            else:
+                seen_names[clean_name] = 1
+                final_name = clean_name
+
+            final_clean_names.append(final_name)
+            name_mapping[benchmark_list[i]] = final_name
+
+        return final_clean_names, name_mapping
 
 
 def main():
