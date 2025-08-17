@@ -1489,6 +1489,11 @@ class BenchmarkVisualizer:
 
         import matplotlib.pyplot as plt
         import numpy as np
+        import pandas as pd
+        from matplotlib.colors import LinearSegmentedColormap, to_rgba
+        from matplotlib.collections import LineCollection
+        import matplotlib.gridspec as gridspec
+        from matplotlib.patches import Patch
 
         sample_rate = 1.0
         benchmark_names = list(self.sched_timeline_paths.keys())
@@ -1513,90 +1518,313 @@ class BenchmarkVisualizer:
 
             print(f"Generating scheduling timeline visualization for {clean_name}...")
 
-            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(15, 10), gridspec_kw={'height_ratios': [3, 1]})
+            fig = plt.figure(figsize=(15, 12))
+            gs = gridspec.GridSpec(4, 1, height_ratios=[1, 3, 1, 1], hspace=0.3)
+
+            ax_overview = fig.add_subplot(gs[0])
+
+            ax_timeline = fig.add_subplot(gs[1])
+
+            ax_delays = fig.add_subplot(gs[2])
+
+            ax_util = fig.add_subplot(gs[3])
 
             base_time = timeline_data['timestamp'].min()
-
-            relative_ms = (timeline_data['timestamp'] - base_time) * 1000
+            max_time = timeline_data['timestamp'].max()
+            timeline_duration_ms = (max_time - base_time) * 1000
 
             cpus = sorted(timeline_data['cpu'].unique())
 
-            task_counts = timeline_data['task_name'].value_counts().head(10)
-            top_tasks = task_counts.index.tolist()
+            task_types = {
+                'idle': [t for t in timeline_data['task_name'].unique()
+                        if any(x in t.lower() for x in ['idle', 'swapper'])],
+                'system': [t for t in timeline_data['task_name'].unique()
+                        if any(x in t.lower() for x in ['kworker', 'migration', 'ksoftirqd', 'watchdog', 'irq'])],
+                'application': []  # Will fill with other tasks
+            }
 
-            colors = plt.cm.tab10(np.linspace(0, 1, len(top_tasks)))
-            task_colors = dict(zip(top_tasks, colors))
+            for task in timeline_data['task_name'].unique():
+                if task not in task_types['idle'] and task not in task_types['system']:
+                    task_types['application'].append(task)
+
+            colors = {
+                'idle': (0.8, 0.8, 0.8, 0.5),       # Light gray for idle
+                'system': (1.0, 0.5, 0.0, 0.7),     # Orange for system
+                'application': (0.0, 0.6, 1.0, 0.8) # Blue for application
+            }
+
+            total_context_switches = len(timeline_data)
+            avg_delay = timeline_data['sched_delay_ms'].mean()
+            max_delay = timeline_data['sched_delay_ms'].max()
+
+            time_segments = []
+            colors_list = []
+
+            sorted_timeline = timeline_data.sort_values(['cpu', 'timestamp'])
 
             for cpu in cpus:
-                cpu_data = timeline_data[timeline_data['cpu'] == cpu]
+                cpu_data = sorted_timeline[sorted_timeline['cpu'] == cpu]
 
-                if not cpu_data.empty:
-                    for task in top_tasks:
-                        task_data = cpu_data[cpu_data['task_name'] == task]
-                        if not task_data.empty:
-                            ax1.scatter(
-                                (task_data['timestamp'] - base_time) * 1000,
-                                [cpu] * len(task_data),
-                                color=task_colors[task],
-                                s=30,
-                                alpha=0.7,
-                                label=f"{task}" if cpu == cpus[0] else ""
-                            )
-                            del task_data
+                if cpu_data.empty:
+                    continue
+
+                last_time = None
+                last_task = None
 
                 for _, row in cpu_data.iterrows():
-                    if row['run_time_ms'] > 0.1:  # Only show significant run times
-                        start_ms = (row['timestamp'] - base_time) * 1000
-                        end_ms = start_ms + row['run_time_ms']
-                        ax1.hlines(
-                            y=cpu,
-                            xmin=start_ms,
-                            xmax=end_ms,
-                            colors='gray',
-                            linewidth=2,
-                            alpha=0.3
-                        )
+                    time_ms = (row['timestamp'] - base_time) * 1000
+                    task = row['task_name']
+
+                    if task in task_types['idle']:
+                        task_type = 'idle'
+                    elif task in task_types['system']:
+                        task_type = 'system'
+                    else:
+                        task_type = 'application'
+
+                    if last_time is not None and task != last_task:
+                        time_segments.append([(last_time, cpu), (time_ms, cpu)])
+                        colors_list.append(colors[task_type])
+
+                    last_time = time_ms
+                    last_task = task
 
                 del cpu_data
-                gc.collect()
+
+            if time_segments:
+                timeline_collection = LineCollection(time_segments, colors=colors_list, linewidths=6, alpha=0.7)
+                ax_overview.add_collection(timeline_collection)
+
+            ax_overview.set_xlim(0, timeline_duration_ms)
+            ax_overview.set_ylim(-1, len(cpus))
+            ax_overview.set_yticks(cpus)
+            ax_overview.set_yticklabels([f'CPU {cpu}' for cpu in cpus])
+            ax_overview.set_title(f'Scheduling Timeline Overview - {clean_name}')
+            ax_overview.grid(True, axis='x', alpha=0.3)
+
+            legend_patches = [
+                Patch(color=colors['idle'], label='Idle'),
+                Patch(color=colors['system'], label='System'),
+                Patch(color=colors['application'], label='Application')
+            ]
+            ax_overview.legend(handles=legend_patches, loc='upper right', ncol=3)
+
+            task_stats = timeline_data.groupby('task_name').agg({
+                'run_time_ms': ['sum', 'mean', 'count'],
+                'sched_delay_ms': ['mean', 'max']
+            })
+
+            task_stats.columns = ['_'.join(col).strip() for col in task_stats.columns]
+
+            task_stats['importance'] = (
+                task_stats['run_time_ms_sum'] * 0.4 +   # Total runtime
+                task_stats['run_time_ms_count'] * 0.3 + # Frequency of appearance
+                task_stats['sched_delay_ms_max'] * 50   # Max scheduling delay
+            )
+
+            top_tasks = task_stats.sort_values('importance', ascending=False).head(15).index.tolist()
+
+            if not any(t in task_types['idle'] for t in top_tasks):
+                idle_tasks = task_stats[task_stats.index.isin(task_types['idle'])].sort_values('run_time_ms_sum', ascending=False)
+                if not idle_tasks.empty:
+                    top_tasks.append(idle_tasks.index[0])
+
+            if not any(t in task_types['system'] for t in top_tasks):
+                system_tasks = task_stats[task_stats.index.isin(task_types['system'])].sort_values('run_time_ms_sum', ascending=False)
+                if not system_tasks.empty:
+                    top_tasks.append(system_tasks.index[0])
+
+            top_tasks = list(dict.fromkeys(top_tasks))
+            top_task_colors = {}
+            for idx, task in enumerate(top_tasks):
+                if task in task_types['idle']:
+                    top_task_colors[task] = colors['idle']
+                elif task in task_types['system']:
+                    top_task_colors[task] = colors['system']
+                else:
+                    intensity = 0.5 + (idx / len(top_tasks)) * 0.5
+                    top_task_colors[task] = (0, intensity, 1, 0.8)
+
+            segments = []
+            segment_colors = []
+
+            task_blocks = {cpu: [] for cpu in cpus}
+
+            # Process events chronologically
+            for cpu in cpus:
+                cpu_data = timeline_data[timeline_data['cpu'] == cpu].sort_values('timestamp')
+
+                current_blocks = {}
+
+                for idx, row in cpu_data.iterrows():
+                    time_ms = (row['timestamp'] - base_time) * 1000
+                    task = row['task_name']
+                    run_time = row['run_time_ms']
+
+                    if run_time < 0.5:
+                        continue
+
+                    if task in top_tasks:
+                        task_blocks[cpu].append({
+                            'task': task,
+                            'start': time_ms,
+                            'end': time_ms + run_time,
+                            'delay': row['sched_delay_ms']
+                        })
+
+                del cpu_data
+
+            for cpu in cpus:
+                y_base = cpu
+                blocks = sorted(task_blocks[cpu], key=lambda x: x['start'])
+
+                for block in blocks:
+                    task = block['task']
+                    start = block['start']
+                    end = block['end']
+                    delay = block['delay']
+
+                    if end - start > 0.5:
+                        rect = plt.Rectangle(
+                            (start, y_base - 0.4),
+                            end - start,
+                            0.8,
+                            facecolor=top_task_colors[task],
+                            edgecolor='black',
+                            linewidth=0.5,
+                            alpha=0.8
+                        )
+                        ax_timeline.add_patch(rect)
+
+                        if delay > avg_delay * 2:
+                            ax_timeline.plot(
+                                [start, start],
+                                [y_base - 0.4, y_base + 0.4],
+                                'r-',
+                                linewidth=1.5
+                            )
+
+            for cpu in cpus:
+                ax_timeline.axhspan(cpu - 0.5, cpu + 0.5, color='black', alpha=0.05)
+
+            ax_timeline.set_xlim(0, timeline_duration_ms)
+            ax_timeline.set_ylim(-1, len(cpus))
+            ax_timeline.set_yticks(cpus)
+            ax_timeline.set_yticklabels([f'CPU {cpu}' for cpu in cpus])
+            ax_timeline.set_xlabel('Time (ms)')
+            ax_timeline.grid(True, axis='x', alpha=0.3)
+
+            time_markers = np.linspace(0, timeline_duration_ms, 10)
+            for tm in time_markers:
+                ax_timeline.axvline(tm, color='gray', linestyle='--', alpha=0.3)
+
+            legend_handles = []
+            for task in top_tasks:
+                short_name = task[:20] + '...' if len(task) > 20 else task
+                legend_handles.append(Patch(color=top_task_colors[task], label=short_name))
+
+            legend_cols = 3 if len(top_tasks) > 6 else 2
+            ax_timeline.legend(handles=legend_handles, loc='upper right', ncol=legend_cols, fontsize='small')
+
+            ax_timeline.set_title(
+                f'Detailed Task Execution (showing {len(top_tasks)} key tasks, '
+                f'{total_context_switches:,} events, '
+                f'avg delay: {avg_delay:.2f}ms)'
+            )
 
             delays = timeline_data['sched_delay_ms'].values
-            if delays.any():
-                non_zero_delays = delays[delays > 0]
-                if len(non_zero_delays) > 0:
-                    ax2.hist(non_zero_delays, bins=30, alpha=0.7)
-                    ax2.set_xlabel('Scheduling Delay (ms)')
-                    ax2.set_ylabel('Frequency')
-                    ax2.set_title('Scheduling Delay Distribution')
+            non_zero_delays = delays[delays > 0]
 
-                    mean_delay = non_zero_delays.mean()
-                    median_delay = np.median(non_zero_delays)
-                    ax2.axvline(mean_delay, color='red', linestyle='--', alpha=0.8,
-                            label=f'Mean: {mean_delay:.3f} ms')
-                    ax2.axvline(median_delay, color='green', linestyle='--', alpha=0.8,
-                            label=f'Median: {median_delay:.3f} ms')
-                    ax2.legend()
+            if len(non_zero_delays) > 0:
+                use_log = max(non_zero_delays) / np.percentile(non_zero_delays, 50) > 10
+
+                if use_log:
+                    bins = np.logspace(
+                        np.log10(max(0.01, non_zero_delays.min())),
+                        np.log10(non_zero_delays.max() * 1.1),
+                        30
+                    )
+                    ax_delays.set_xscale('log')
+                    ax_delays.hist(non_zero_delays, bins=bins, alpha=0.7)
+                    ax_delays.set_xlabel('Scheduling Delay (ms) - Log Scale')
                 else:
-                    ax2.text(0.5, 0.5, 'No non-zero scheduling delays found',
-                            transform=ax2.transAxes, ha='center', va='center')
+                    bins = 30
+                    ax_delays.hist(non_zero_delays, bins=bins, alpha=0.7)
+                    ax_delays.set_xlabel('Scheduling Delay (ms)')
+
+                percentiles = [50, 90, 99]
+                percentile_values = np.percentile(non_zero_delays, percentiles)
+                percentile_colors = ['green', 'orange', 'red']
+
+                for pct, val, color in zip(percentiles, percentile_values, percentile_colors):
+                    ax_delays.axvline(val, color=color, linestyle='--', alpha=0.8,
+                            label=f'{pct}th percentile: {val:.2f} ms')
+
+                mean_delay = non_zero_delays.mean()
+                ax_delays.axvline(mean_delay, color='blue', linestyle='-', alpha=0.8,
+                        label=f'Mean: {mean_delay:.2f} ms')
+
+                ax_delays.set_ylabel('Frequency')
+                ax_delays.set_title('Scheduling Delay Distribution')
+                ax_delays.legend(loc='upper right')
+                ax_delays.grid(True, alpha=0.3)
             else:
-                ax2.text(0.5, 0.5, 'No scheduling delay data found',
-                        transform=ax2.transAxes, ha='center', va='center')
+                ax_delays.text(0.5, 0.5, 'No non-zero scheduling delays found',
+                        transform=ax_delays.transAxes, ha='center', va='center')
+                ax_delays.set_title('Scheduling Delay Distribution (No Data)')
 
-            ax1.set_xlabel('Time (ms)')
-            ax1.set_ylabel('CPU')
-            ax1.set_title(f'Scheduling Timeline - {clean_name}')
+            time_bins = np.linspace(0, timeline_duration_ms, min(100, int(timeline_duration_ms/10) + 1))
+            cpu_util = np.zeros((len(cpus), len(time_bins)-1))
 
-            ax1.set_yticks(cpus)
-            ax1.set_yticklabels([f'CPU {cpu}' for cpu in cpus])
+            for cpu_idx, cpu in enumerate(cpus):
+                cpu_data = timeline_data[timeline_data['cpu'] == cpu]
 
-            handles, labels = ax1.get_legend_handles_labels()
-            by_label = dict(zip(labels, handles))
-            ax1.legend(by_label.values(), by_label.keys(),
-                    loc='upper right', fontsize='small')
+                for _, row in cpu_data.iterrows():
+                    start = (row['timestamp'] - base_time) * 1000
+                    duration = row['run_time_ms']
+                    end = start + duration
 
-            ax1.grid(True, axis='x', alpha=0.3)
-            ax2.grid(True, alpha=0.3)
+                    if row['task_name'] in task_types['idle']:
+                        continue
+
+                    start_bin = max(0, np.searchsorted(time_bins, start) - 1)
+                    end_bin = min(len(time_bins)-1, np.searchsorted(time_bins, end))
+
+                    for b in range(start_bin, end_bin):
+                        bin_start = time_bins[b]
+                        bin_end = time_bins[b+1]
+
+                        overlap_start = max(start, bin_start)
+                        overlap_end = min(end, bin_end)
+                        overlap_duration = overlap_end - overlap_start
+
+                        bin_width = bin_end - bin_start
+                        if bin_width > 0:
+                            cpu_util[cpu_idx, b] += (overlap_duration / bin_width) * 100
+
+                del cpu_data
+
+            cpu_util = np.minimum(cpu_util, 100)
+
+            im = ax_util.imshow(cpu_util, aspect='auto', interpolation='nearest',
+                        extent=[0, timeline_duration_ms, -0.5, len(cpus)-0.5],
+                        cmap='RdYlGn', vmin=0, vmax=100)
+
+            ax_util.set_yticks(range(len(cpus)))
+            ax_util.set_yticklabels([f'CPU {cpu}' for cpu in cpus])
+            ax_util.set_xlabel('Time (ms)')
+            ax_util.set_ylabel('CPU')
+            ax_util.set_title('CPU Utilization Over Time (%)')
+
+            cbar = plt.colorbar(im, ax=ax_util)
+            cbar.set_label('Utilization %')
+
+            avg_util = cpu_util.mean()
+            max_util = cpu_util.max()
+
+            ax_util.text(0.01, -0.15,
+                    f"Avg Utilization: {avg_util:.1f}% • Max Utilization: {max_util:.1f}%",
+                    transform=ax_util.transAxes, ha='left', fontsize=9)
 
             plt.tight_layout()
             safe_name = clean_name.replace(' ', '_').replace('/', '_').replace('\\', '_')
@@ -1604,10 +1832,9 @@ class BenchmarkVisualizer:
             plt.close(fig)
             print(f"✓ Generated {safe_name}_sched_timeline.png")
 
-            self._plot_task_timeline(bench_name, clean_name, timeline_data, top_tasks, task_colors)
-
             del timeline_data
             gc.collect()
+
 
 
     def _plot_task_timeline(self, bench_name, clean_name, timeline_data, top_tasks, task_colors):
