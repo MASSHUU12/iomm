@@ -1616,47 +1616,186 @@ class BenchmarkVisualizer:
 
         import matplotlib.pyplot as plt
         import numpy as np
+        import pandas as pd
+        from matplotlib.collections import PolyCollection
+        from matplotlib.patches import Patch
 
-        fig, ax = plt.subplots(figsize=(15, 8))
+        task_counts = timeline_data['task_name'].value_counts()
+        task_durations = timeline_data.groupby('task_name')['run_time_ms'].sum().sort_values(ascending=False)
+
+        significant_tasks = task_durations[task_durations > task_durations.sum() * 0.01].index.tolist()
+        frequent_tasks = task_counts.head(10).index.tolist()
+        important_tasks = list(set(significant_tasks + frequent_tasks))
+        idle_tasks = [t for t in important_tasks
+                    if any(x in t.lower() for x in ['idle', 'kworker', 'system', 'swapper', 'migration'])]
+        display_tasks = important_tasks[:20]
+
+        task_first_seen = {task: timeline_data[timeline_data['task_name'] == task]['timestamp'].min()
+                        for task in display_tasks}
+        display_tasks = sorted([t for t in display_tasks if t not in idle_tasks],
+                            key=lambda x: task_first_seen[x]) + sorted(idle_tasks)
+
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(15, 12),
+                                    gridspec_kw={'height_ratios': [3, 1], 'hspace': 0.3})
 
         base_time = timeline_data['timestamp'].min()
+        max_time = timeline_data['timestamp'].max()
+        timeline_duration_ms = (max_time - base_time) * 1000
 
-        for i, task in enumerate(top_tasks):
-            task_data = timeline_data[timeline_data['task_name'] == task]
+        colors = plt.cm.viridis(np.linspace(0, 0.8, len(display_tasks)))
+        for i, task in enumerate(display_tasks):
+            if task in idle_tasks:
+                colors[i] = [0.8, 0.8, 0.8, 0.6]  # Light gray for idle tasks
 
-            if not task_data.empty:
-                x = (task_data['timestamp'].values - base_time) * 1000
-                y = [i] * len(task_data)
-                size = task_data['run_time_ms'].values * 10 + 10
-                colors = plt.cm.tab20(task_data['cpu'].values % 20 / 20)
+        task_cmap = dict(zip(display_tasks, colors))
 
-                scatter = ax.scatter(x, y, s=size, c=colors, alpha=0.7)
+        cpu_colors = plt.cm.tab10(np.linspace(0, 1, 10))
+        cpus = sorted(timeline_data['cpu'].unique())
 
-                if len(task_data) > 1:
-                    sorted_data = task_data.sort_values('timestamp')
-                    ax.plot((sorted_data['timestamp'].values - base_time) * 1000,
-                        [i] * len(sorted_data),
-                        'k-', alpha=0.2)
-                    del sorted_data
+        y_pos = {task: i for i, task in enumerate(display_tasks)}
 
-                del task_data, x, y, size, colors
+        segments = {task: [] for task in display_tasks}
 
-        ax.set_yticks(range(len(top_tasks)))
-        ax.set_yticklabels([t[:30] + ('...' if len(t) > 30 else '') for t in top_tasks])
+        displayed_runtime = 0
+        total_runtime = 0
 
-        ax.set_xlabel('Time from start (ms)')
-        ax.set_title(f'Task Activity Timeline - {clean_name}')
-        ax.grid(True, axis='x', alpha=0.3)
+        sorted_data = timeline_data.sort_values('timestamp')
+        for _, row in sorted_data.iterrows():
+            task = row['task_name']
+            time_ms = (row['timestamp'] - base_time) * 1000
+            run_time = row['run_time_ms']
+            cpu = row['cpu']
 
-        sm = plt.cm.ScalarMappable(cmap=plt.cm.tab20,
-                                norm=plt.Normalize(0, 19))
-        sm.set_array([])
-        cbar = plt.colorbar(sm, ax=ax)
-        cbar.set_label('CPU')
+            total_runtime += run_time
 
-        cpu_ticks = sorted(timeline_data['cpu'].unique())
-        cbar.set_ticks([tick % 20 / 20 for tick in cpu_ticks])
-        cbar.set_ticklabels([f'CPU {tick}' for tick in cpu_ticks])
+            if task in display_tasks and run_time > 0.1:  # Only include meaningful durations
+                segments[task].append((time_ms, time_ms + run_time, cpu))
+                displayed_runtime += run_time
+
+        hidden_runtime_pct = 100 - (displayed_runtime / total_runtime * 100) if total_runtime > 0 else 0
+
+        task_cpu_times = {task: {cpu: 0 for cpu in cpus} for task in display_tasks}
+
+        for task in display_tasks:
+            for start, end, cpu in segments[task]:
+                task_cpu_times[task][cpu] += (end - start)
+
+        idle_cpu_util = {cpu: 0 for cpu in cpus}
+        for task in idle_tasks:
+            if task in task_cpu_times:
+                for cpu in cpus:
+                    idle_cpu_util[cpu] += task_cpu_times[task][cpu] / timeline_duration_ms * 100 if timeline_duration_ms > 0 else 0
+
+        avg_idle_pct = sum(idle_cpu_util.values()) / len(cpus) if cpus else 0
+
+        for task_idx, task in enumerate(display_tasks):
+            task_segments = segments[task]
+            if not task_segments:
+                continue
+
+            y = y_pos[task]
+            verts = []
+            cpu_colors_list = []
+
+            for start, end, cpu in task_segments:
+                verts.append([(start, y - 0.4), (start, y + 0.4),
+                            (end, y + 0.4), (end, y - 0.4)])
+                cpu_colors_list.append(cpu_colors[cpu % 10])
+
+            if verts:
+                if task in idle_tasks:
+                    bars = PolyCollection(verts, facecolors=[0.8, 0.8, 0.8, 0.6],
+                                        edgecolors='gray', linewidth=0.2, alpha=0.5)
+                else:
+                    bars = PolyCollection(verts, facecolors=cpu_colors_list,
+                                        edgecolors='black', linewidth=0.5, alpha=0.7)
+                ax1.add_collection(bars)
+
+        ax1.set_yticks(list(y_pos.values()))
+
+        task_labels = []
+        for task in display_tasks:
+            cpu_percentages = [(task_cpu_times[task][cpu] / timeline_duration_ms * 100)
+                            for cpu in cpus]
+            avg_cpu_util = sum(cpu_percentages) / len(cpus) if cpus else 0
+            max_cpu_util = max(cpu_percentages) if cpu_percentages else 0
+
+            display_name = task[:25] + '...' if len(task) > 25 else task
+
+            if max_cpu_util > 50:
+                label_text = f"{display_name} (avg: {avg_cpu_util:.1f}%, max: {max_cpu_util:.1f}%)"
+            else:
+                label_text = f"{display_name} (avg: {avg_cpu_util:.1f}%)"
+
+            task_labels.append(label_text)
+
+        ax1.set_yticklabels(task_labels)
+        ax1.set_ylim(-1, len(display_tasks))
+
+        ax1.set_xlim(0, timeline_duration_ms)
+        ax1.grid(True, axis='x', alpha=0.3)
+        ax1.set_xlabel('Time from start (ms)')
+
+        cpu_patches = [Patch(color=cpu_colors[cpu % 10], label=f'CPU {cpu}')
+                    for cpu in cpus]
+
+        title = f'Task Execution Timeline - {clean_name}\n'
+        title += f'Showing {len(display_tasks)} tasks ({displayed_runtime/total_runtime*100:.1f}% of runtime)'
+        if avg_idle_pct > 5:
+            title += f' • Avg CPU Idle: {avg_idle_pct:.1f}%'
+        if hidden_runtime_pct > 5:
+            title += f' • Hidden: {hidden_runtime_pct:.1f}%'
+
+        ax1.set_title(title)
+        ax1.legend(handles=cpu_patches, loc='upper right', ncol=2)
+
+        time_bins = np.linspace(0, timeline_duration_ms, min(200, int(timeline_duration_ms/5) + 1))
+
+        all_activity = np.zeros((len(cpus), len(time_bins)-1))
+        shown_activity = np.zeros((len(cpus), len(time_bins)-1))
+
+        for _, row in timeline_data.iterrows():
+            cpu_idx = cpus.index(row['cpu'])
+            start = (row['timestamp'] - base_time) * 1000
+            duration = row['run_time_ms']
+            end = start + duration
+
+            start_bin = max(0, np.searchsorted(time_bins, start) - 1)
+            end_bin = min(len(time_bins)-1, np.searchsorted(time_bins, end))
+
+            for b in range(start_bin, end_bin):
+                all_activity[cpu_idx, b] += duration / (time_bins[b+1] - time_bins[b])
+
+                if row['task_name'] in display_tasks and duration > 0.1:
+                    shown_activity[cpu_idx, b] += duration / (time_bins[b+1] - time_bins[b])
+
+        hidden_mask = (all_activity > 0.1) & (shown_activity < 0.05)
+
+        all_activity = np.clip(all_activity / all_activity.max() if all_activity.max() > 0 else all_activity, 0, 1)
+
+        im = ax2.imshow(all_activity, aspect='auto', interpolation='nearest',
+                    extent=[0, timeline_duration_ms, -0.5, len(cpus)-0.5],
+                    cmap='viridis')
+
+        if hidden_mask.any():
+            ax2.contour(hidden_mask, levels=[0.5],
+                    extent=[0, timeline_duration_ms, -0.5, len(cpus)-0.5],
+                    colors='red', linewidths=1, alpha=0.7)
+
+        ax2.set_yticks(range(len(cpus)))
+        ax2.set_yticklabels([f'CPU {cpu}' for cpu in cpus])
+        ax2.set_xlabel('Time from start (ms)')
+        ax2.set_ylabel('CPU')
+        ax2.set_title('CPU Activity Intensity (red outline = activity not shown in timeline)')
+
+        cbar = plt.colorbar(im, ax=ax2, label='Activity Level')
+
+        missing_pct = ((all_activity > 0.1) & (shown_activity < 0.05)).sum() / (all_activity > 0).sum() * 100
+        if missing_pct > 10:
+            ax2.text(0.5, -0.2,
+                    f"Note: {missing_pct:.1f}% of CPU activity involves tasks not shown in timeline\n"
+                    f"(short-duration tasks, system tasks, or less frequent tasks)",
+                    transform=ax2.transAxes, ha='center', fontsize=9, bbox=dict(facecolor='white', alpha=0.7))
 
         plt.tight_layout()
         safe_name = clean_name.replace(' ', '_').replace('/', '_').replace('\\', '_')
