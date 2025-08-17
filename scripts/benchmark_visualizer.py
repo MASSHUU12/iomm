@@ -6,7 +6,7 @@ import re
 import sys
 import gc
 from pathlib import Path
-from typing import Optional, Dict, Generator, List, Tuple
+from typing import Optional, Dict, List
 import warnings
 
 warnings.filterwarnings('ignore')
@@ -629,6 +629,83 @@ class BenchmarkVisualizer:
         gc.collect()
 
 
+    def plot_performance_trends(self):
+        resource_data = self._load_resource_data()
+        if resource_data is None or resource_data.empty:
+            return
+
+        import matplotlib.pyplot as plt
+        import numpy as np
+        import pandas as pd
+        from scipy import stats
+
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 10))
+
+        if 'datetime' in resource_data.columns:
+            resource_data_sorted = resource_data.sort_values('datetime').reset_index(drop=True)
+
+            x = np.arange(len(resource_data_sorted))
+            y = resource_data_sorted['elapsed_time']
+
+            if len(x) > 2:
+                slope, intercept, r_value, p_value, std_err = stats.linregress(x, y)
+                trend_line = slope * x + intercept
+
+                ax1.scatter(x, y, alpha=0.7, s=60)
+                ax1.plot(x, trend_line, 'r--', alpha=0.8,
+                        label=f'Trend: slope={slope:.4f}, R²={r_value**2:.3f}')
+                ax1.set_xlabel('Benchmark Sequence')
+                ax1.set_ylabel('Execution Time (seconds)')
+                ax1.set_title('Performance Trend Analysis')
+                ax1.legend()
+                ax1.grid(True, alpha=0.3)
+
+            if len(resource_data_sorted) > 1:
+                rolling_mean = pd.Series(y).rolling(window=min(3, len(y))).mean()
+                rolling_std = pd.Series(y).rolling(window=min(3, len(y))).std()
+
+                ax2.plot(x, y, 'bo-', alpha=0.7, label='Actual')
+                ax2.plot(x, rolling_mean, 'r-', linewidth=2, label='Rolling Mean')
+                ax2.fill_between(x,
+                            rolling_mean - rolling_std,
+                            rolling_mean + rolling_std,
+                            alpha=0.3, label='±1 Std Dev')
+                ax2.set_xlabel('Benchmark Sequence')
+                ax2.set_ylabel('Execution Time (seconds)')
+                ax2.set_title('Performance Stability Analysis')
+                ax2.legend()
+                ax2.grid(True, alpha=0.3)
+
+            cpu_time = resource_data_sorted['user_time'] + resource_data_sorted['system_time']
+            memory_mb = resource_data_sorted['max_rss_kb'] / 1024
+
+            scatter = ax3.scatter(cpu_time, memory_mb,
+                                c=resource_data_sorted['elapsed_time'],
+                                s=80, alpha=0.7, cmap='viridis')
+            ax3.set_xlabel('CPU Time (seconds)')
+            ax3.set_ylabel('Peak Memory (MB)')
+            ax3.set_title('Resource Usage Pattern')
+            plt.colorbar(scatter, ax=ax3, label='Execution Time (s)')
+            ax3.grid(True, alpha=0.3)
+
+            ax4.hist(resource_data_sorted['elapsed_time'], bins=min(10, len(resource_data_sorted)),
+                    alpha=0.7, edgecolor='black')
+            ax4.axvline(resource_data_sorted['elapsed_time'].mean(),
+                    color='red', linestyle='--', label='Mean')
+            ax4.axvline(resource_data_sorted['elapsed_time'].median(),
+                    color='green', linestyle='--', label='Median')
+            ax4.set_xlabel('Execution Time (seconds)')
+            ax4.set_ylabel('Frequency')
+            ax4.set_title('Performance Distribution')
+            ax4.legend()
+            ax4.grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        plt.savefig(self.output_dir / "performance_trends.png", dpi=300, bbox_inches='tight')
+        plt.close(fig)
+        print("✓ Generated performance_trends.png")
+
+
     def _generate_execution_summary_table(self, benchmarks, clean_names, means, stds, medians, mins, maxs):
         import pandas as pd
 
@@ -678,6 +755,8 @@ class BenchmarkVisualizer:
 
         import matplotlib.pyplot as plt
         import numpy as np
+        import pandas as pd
+        import seaborn as sns
 
         fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 10))
 
@@ -739,26 +818,47 @@ class BenchmarkVisualizer:
         ax3.set_ylim(0, 100)
         ax3.grid(True, alpha=0.3)
 
-        if 'datetime' in resource_data.columns:
-            ax4.plot(resource_data['datetime'], total_time, 'o-', label='Elapsed Time')
-            ax4.plot(resource_data['datetime'], cpu_time, 's-', label='CPU Time')
-            ax4.set_xlabel('Time')
-            ax4.set_ylabel('Time (seconds)')
-            ax4.set_title('Execution Timeline')
-            ax4.legend()
-            ax4.tick_params(axis='x', rotation=45)
-            ax4.grid(True, alpha=0.3)
+        if len(resource_data) > 1:
+            metrics_df = pd.DataFrame({
+                'Benchmark': clean_benchmarks,
+                'Execution Time (s)': resource_data['elapsed_time'].values,
+                'Memory Usage (MB)': resource_data['max_rss_kb'].values / 1024,
+                'CPU Utilization (%)': (user_time + system_time) / resource_data['elapsed_time'] * 100
+            })
 
-            timeline_times = np.concatenate([total_time, cpu_time])
-            if len(timeline_times) > 0 and np.max(timeline_times) > 0 and np.min(timeline_times[timeline_times > 0]) > 0:
-                ratio = np.max(timeline_times) / np.min(timeline_times[timeline_times > 0])
-                if ratio > 10:
-                    ax4.set_yscale('log')
-                    ax4.set_ylabel('Time (seconds) - Log Scale')
+            best_exec_time = metrics_df['Execution Time (s)'].min()
+            best_memory = metrics_df['Memory Usage (MB)'].min()
+            best_cpu = metrics_df['CPU Utilization (%)'].max()
+
+            metrics_df['Time Score'] = best_exec_time / metrics_df['Execution Time (s)'] * 100
+            metrics_df['Memory Score'] = best_memory / metrics_df['Memory Usage (MB)'] * 100
+            metrics_df['CPU Score'] = metrics_df['CPU Utilization (%)'] / best_cpu * 100
+
+            plot_df = pd.melt(
+                metrics_df,
+                id_vars=['Benchmark'],
+                value_vars=['Time Score', 'Memory Score', 'CPU Score'],
+                var_name='Metric',
+                value_name='Score'
+            )
+
+            sns.heatmap(
+                metrics_df.set_index('Benchmark')[['Time Score', 'Memory Score', 'CPU Score']],
+                annot=True,
+                cmap='RdYlGn',
+                linewidths=1,
+                ax=ax4,
+                vmin=0,
+                vmax=100,
+                fmt='.1f'
+            )
+
+            ax4.set_title('Performance Scores')
+            ax4.set_ylabel('Benchmark')
         else:
-            ax4.text(0.5, 0.5, 'No timestamp data available',
+            ax4.text(0.5, 0.5, 'Insufficient data for comparison',
                     transform=ax4.transAxes, ha='center', va='center')
-            ax4.set_title('Execution Timeline (No Data)')
+            ax4.set_title('Performance Comparison (Insufficient Data)')
 
         plt.tight_layout()
         plt.savefig(self.output_dir / "resource_usage.png", dpi=300, bbox_inches='tight')
@@ -1713,6 +1813,9 @@ class BenchmarkVisualizer:
         self.plot_execution_times()
         gc.collect()
 
+        self.plot_performance_trends()
+        gc.collect()
+
         self.plot_resource_usage()
         gc.collect()
 
@@ -1916,6 +2019,9 @@ Examples:
                 gc.collect()
             if 'correlation' in plot_types:
                 visualizer.plot_correlation_analysis()
+                gc.collect()
+            if 'trends' in plot_types:
+                visualizer.plot_performance_trends()
                 gc.collect()
 
             visualizer.generate_summary_report()
